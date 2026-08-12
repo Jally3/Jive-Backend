@@ -1,0 +1,19 @@
+{
+  "code": 1,
+  "page": 1,
+  "pagecount": 1,
+  "total": 1,
+  "list": [
+    {
+      "vod_id": 42,
+      "vod_name": "示例剧",
+      "type_id": 2,
+      "vod_pic": "https://img.example.com/a.jpg",
+      "vod_remarks": "更新至2集",
+      "vod_content": "<p>安全简介</p>",
+      "vod_year": "2026",
+      "vod_play_from": "hls$$$backup",
+      "vod_play_url": "第1集$https://media.example.com/1.m3u8#第2集$https://media.example.com/2.m3u8$$$第1集$https://cdn.example.com/1.mp4"
+    }
+  ]
+}
