@@ -1,0 +1,25 @@
+[Unit]
+Description=Jive TMDB Catalog Lite
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jive
+Group=jive
+WorkingDirectory=/opt/jive-catalog
+Environment=CATALOG_STATE_FILE=/var/lib/jive-catalog/state.json
+EnvironmentFile=/etc/jive-catalog/env
+ExecStart=/usr/bin/node --max-old-space-size=256 /opt/jive-catalog/dist/apps/catalog/src/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/jive-catalog
+MemoryMax=320M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

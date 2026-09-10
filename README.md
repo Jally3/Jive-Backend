@@ -1,47 +1,91 @@
-# Jive Backend
+# Jive TMDB Catalog Lite
 
-Jive 的模块化单体 VOD 后端。API 与 Worker 共享领域代码，但作为两个独立进程部署；目录来自 PostgreSQL，播放地址只在点击播放时解析且不长期落库。
+面向 Jive 客户端的轻量 TMDB 策展榜单服务。生产运行时只有一个 Node.js 进程，不依赖
+Docker、NestJS、PostgreSQL、Redis 或第三方运行时包。
 
-## 本地启动
+首次阅读或准备修改代码时，请参阅 [项目地图](./PROJECT_MAP.md)，其中包含带注释的目录树、
+启动/刷新/请求链路，以及每类需求对应的修改入口。
 
-需要 Node.js 24、pnpm 10 和 Docker。
+如果想通过本项目学习 Node.js 接口开发，请按 [Node.js 后端学习指南](./NODE_BACKEND_LEARNING_GUIDE.md)
+中的阅读顺序和动手练习进行。
+
+## 接口
+
+```http
+GET /api/tmdb/v1/catalog?feed=latest|popular|top_rated
+GET /api/tmdb/v1/manifest
+GET /data/tmdb/v1/latest.json
+GET /data/tmdb/v1/popular.json
+GET /data/tmdb/v1/top-rated.json
+GET /data/tmdb/v1/manifest.json
+GET /health/live
+GET /health/ready
+GET /metrics
+```
+
+`.json` 兼容路径由内存动态返回，不生成对外静态文件。Catalog 请求不会实时访问 TMDB；
+后台任务串行刷新 Feed，并在刷新失败时继续返回最近一次成功快照。
+
+## 本地运行
+
+需要 Node.js 24 和 pnpm 10：
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres redis-cache redis-queue
 pnpm install
-pnpm db:migrate
-pnpm dev:api
-pnpm dev:worker
+pnpm dev
 ```
 
-API 默认位于 `http://localhost:3000`，Swagger UI 位于 `/docs`，指标位于 `/metrics`。也可直接 `docker compose up --build` 启动全部服务。生产部署必须替换两个 32 字符以上的 Token Secret、启用 TLS，并使用受控 Secret 管理。
+Node 不会自动读取 `.env`。本地可以通过 shell 加载，生产环境由 systemd 的
+`EnvironmentFile` 注入。
 
-## 同步和源接入
+## 配置
 
-初始 migration 注册 `storm` 源。使用 Admin Token 调用 `POST /api/v1/admin/sources/src_storm/sync`，请求体 `{ "type": "full" }`。每个源有独立 `vod-sync:{source_code}` 队列。Source B 同时提供不可用占位实现 `source-b` 和可配置的兼容 HTTP 实现 `source-b-http`；后者通过 `SOURCE_B_BASE_URL` 接入同类 JSON 契约。未确认授权时不要在 Admin 中启用该源。
+| 环境变量                  | 默认值         | 说明                             |
+| ------------------------- | -------------- | -------------------------------- |
+| `TMDB_READ_ACCESS_TOKEN`  | 必填           | TMDB Read Access Token           |
+| `PORT`                    | `3000`         | 监听端口                         |
+| `HOST`                    | `127.0.0.1`    | 默认只供本机反向代理访问         |
+| `TMDB_API_BASE_URL`       | 官方 v3 地址   | 测试或代理地址                   |
+| `TMDB_CONCURRENCY`        | `2`            | 上游并发，最大4                  |
+| `TMDB_PAGES`              | `5`            | 每个列表最多扫描页数，最大10     |
+| `TMDB_REQUEST_TIMEOUT_MS` | `10000`        | 单次请求超时，最大30秒           |
+| `PUBLIC_RATE_LIMIT_MAX`   | `120`          | 每个远端地址每分钟请求数         |
+| `TRUST_PROXY`             | `false`        | 是否信任反向代理传入的客户端地址 |
+| `CATALOG_STATE_FILE`      | 应用默认不启用 | 可选的单文件重启恢复状态         |
+| `LOG_LEVEL`               | `info`         | JSON日志等级                     |
 
-Storm URL 来自 `STORM_BASE_URL`，只允许 HTTPS，默认阻止回环、链路本地、私网和云元数据目的地址。仅在完全受控的本地测试环境才可设置 `SOURCE_ALLOW_PRIVATE_HOSTS=true`。接入任何真实源前，项目方必须确认内容、地区和商业授权。
+设置 `CATALOG_STATE_FILE` 时，状态只用于服务重启恢复，不作为HTTP静态文件发布。写入采用
+临时文件加原子重命名。留空则为纯内存模式，进程重启后需要重新预热。
+生产 systemd 单元默认启用 `/var/lib/jive-catalog/state.json`，避免重启打断 1～7 天的刷新周期。
 
-## 运维
+## 刷新与降级策略
 
-- migration 作为独立部署步骤执行，API/Worker 不自动迁移。
-- Queue Redis 启用 AOF 和 `noeviction`；Cache Redis 可淘汰且不可作为事实来源。
-- `/health/live` 只检查进程；`/health/ready` 强制检查 PostgreSQL，Cache Redis 失败仅降级。
-- 全量同步只有完整遍历且无单条失败才累计缺失次数，连续两次缺失后才禁用映射。
-- 修改源、线路、内容和映射的 Admin 操作写入脱敏审计日志。
+| Feed        | 正常刷新 | 标记 `stale` | 最大保留 |
+| ----------- | -------- | ------------ | -------- |
+| `latest`    | 1 天     | 36 小时      | 7 天     |
+| `popular`   | 3 天     | 4 天         | 14 天    |
+| `top_rated` | 7 天     | 8 天         | 30 天    |
 
-## 验证
+刷新失败时保留最近一次成功快照，并按 5 分钟、15 分钟、1 小时、6 小时封顶的节奏退避重试；
+任意一次成功刷新都会重置该 Feed 的连续失败次数。
+
+## 构建与验证
 
 ```bash
 pnpm lint
 pnpm format:check
 pnpm typecheck
 pnpm test
-RUN_TESTCONTAINERS=1 pnpm test:integration
-pnpm test:e2e
 pnpm build
-pnpm openapi:check
 ```
 
-生产前还应在目标基础设施执行 `EXPLAIN ANALYZE`、负载测试、备份恢复、故障演练和真实授权源的低频 smoke test；这些依赖部署环境与合法凭据，不在普通 CI 访问公网执行。
+生产服务器只需上传 `dist`、`package.json` 和 systemd 配置，然后使用 Node直接启动：
+
+```bash
+node dist/apps/catalog/src/main.js
+```
+
+示例服务单元位于 `deploy/jive-catalog.service`。HTTPS和公网连接建议由Caddy处理。
+服务保持监听环回地址时，可在Caddy后设置 `TRUST_PROXY=true`；如果直接暴露端口，应保持
+为 `false`，防止伪造转发请求头绕过限流。
