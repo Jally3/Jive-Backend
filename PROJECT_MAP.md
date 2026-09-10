@@ -55,8 +55,12 @@ Jive-Backend/
 │   ├── http-server.spec.ts             # 验证兼容路由、压缩、ETag/304 和就绪状态
 │   └── state-store.spec.ts             # 验证状态原子存取及悬空条目引用校验
 ├── deploy/
-│   ├── README.md                       # Node + systemd + Caddy 的生产部署操作说明
+│   ├── README.md                       # 部署文档入口和生产形态摘要
+│   ├── DEPLOYMENT_RUNBOOK.md           # 当前服务器首次部署、升级、验证与回滚手册
 │   └── jive-catalog.service            # systemd 单元；进程权限、资源限制和重启策略
+├── docs/
+│   ├── CLIENT_API.md                    # 给客户端开发者的接口、缓存和错误处理说明
+│   └── openapi.yaml                     # 可导入工具和代码生成器的 OpenAPI 3.1 契约
 ├── scripts/
 │   └── clean.mjs                       # 构建前删除 dist，防止旧产物残留
 ├── .github/

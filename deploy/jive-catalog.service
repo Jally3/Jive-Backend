@@ -10,7 +10,7 @@ Group=jive
 WorkingDirectory=/opt/jive-catalog
 Environment=CATALOG_STATE_FILE=/var/lib/jive-catalog/state.json
 EnvironmentFile=/etc/jive-catalog/env
-ExecStart=/usr/bin/node --max-old-space-size=256 /opt/jive-catalog/dist/apps/catalog/src/main.js
+ExecStart=/usr/local/bin/node --max-old-space-size=256 /opt/jive-catalog/dist/apps/catalog/src/main.js
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

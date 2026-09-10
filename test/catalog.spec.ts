@@ -51,6 +51,22 @@ describe('CatalogGenerator', () => {
     expect(snapshot.items).not.toHaveProperty('tmdb:movie:3');
   });
 
+  it('filters English-language variety shows but keeps other English TV shows', async () => {
+    const tmdb = new StubTmdb();
+    tmdb.tv = [
+      { ...tv(7, '英语综艺', 100, [10764]), original_language: 'en' },
+      { ...tv(8, '韩语综艺', 90, [10764]), original_language: 'ko' },
+      { ...tv(9, '英语剧集', 80, [18]), original_language: 'en' },
+    ];
+
+    const snapshot = await new CatalogGenerator(tmdb).generate('popular');
+
+    expect(snapshot.groups.all).toEqual(['tmdb:tv:8', 'tmdb:tv:9']);
+    expect(snapshot.groups.variety).toEqual(['tmdb:tv:8']);
+    expect(snapshot.groups.tv).toEqual(['tmdb:tv:9']);
+    expect(snapshot.items).not.toHaveProperty('tmdb:tv:7');
+  });
+
   it('uses the latest episode date and season for returning TV', async () => {
     const tmdb = new StubTmdb();
     tmdb.onAir = [{ id: 20 }];

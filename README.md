@@ -9,6 +9,12 @@ Docker、NestJS、PostgreSQL、Redis 或第三方运行时包。
 如果想通过本项目学习 Node.js 接口开发，请按 [Node.js 后端学习指南](./NODE_BACKEND_LEARNING_GUIDE.md)
 中的阅读顺序和动手练习进行。
 
+生产发布和服务器维护请遵循 [部署运行手册](./deploy/DEPLOYMENT_RUNBOOK.md)。该手册记录了当前
+Nginx Stream、网站、Xray 与 Jive 共存环境的首次部署、升级、验证和回滚流程。
+
+客户端接入请使用 [客户端接口文档](./docs/CLIENT_API.md)，工具和代码生成器可导入
+[OpenAPI 3.1 定义](./docs/openapi.yaml)。
+
 ## 接口
 
 ```http
@@ -86,6 +92,6 @@ pnpm build
 node dist/apps/catalog/src/main.js
 ```
 
-示例服务单元位于 `deploy/jive-catalog.service`。HTTPS和公网连接建议由Caddy处理。
-服务保持监听环回地址时，可在Caddy后设置 `TRUST_PROXY=true`；如果直接暴露端口，应保持
-为 `false`，防止伪造转发请求头绕过限流。
+示例服务单元位于 `deploy/jive-catalog.service`。当前生产环境由已有 Nginx 提供 HTTPS，并通过
+`127.0.0.1:8443` 转发到仅监听环回地址的 Node 服务。当前 Stream 链路未保留可信客户端 IP，
+因此生产配置保持 `TRUST_PROXY=false`；具体配置和限制见部署运行手册。

@@ -136,10 +136,13 @@ function normalize(raw: TmdbListItem, mediaType: MediaType, sortDate: string): C
   const genres = (raw.genre_ids ?? raw.genres?.map((genre) => genre.id ?? 0) ?? []).filter(
     positiveInteger,
   );
+  const itemCategory = category(mediaType, genres);
+  if (itemCategory === 'variety' && clean(raw.original_language).toLowerCase() === 'en')
+    return null;
   return {
     tmdbId: raw.id,
     mediaType,
-    category: category(mediaType, genres),
+    category: itemCategory,
     localizedTitle: localizedTitle || originalTitle,
     originalTitle,
     aliases: [],

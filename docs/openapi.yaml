@@ -1,0 +1,474 @@
+openapi: 3.1.0
+info:
+  title: Jive TMDB Catalog API
+  version: 1.0.0
+  description: Read-only catalog snapshots for Jive clients.
+servers:
+  - url: https://hey-rickytse.com
+    description: Production
+tags:
+  - name: Catalog
+  - name: Manifest
+  - name: Health
+paths:
+  /api/tmdb/v1/catalog:
+    get:
+      tags: [Catalog]
+      summary: Get a catalog snapshot
+      operationId: getCatalog
+      parameters:
+        - name: feed
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/FeedName'
+        - name: If-None-Match
+          in: header
+          required: false
+          description: ETag returned by a previous request.
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogSuccess'
+        '304':
+          description: Snapshot unchanged; response has no body.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          $ref: '#/components/responses/InvalidArgument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/CatalogUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/tmdb/v1/manifest:
+    get:
+      tags: [Manifest]
+      summary: Get available feed revisions
+      operationId: getManifest
+      responses:
+        '200':
+          $ref: '#/components/responses/ManifestSuccess'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /data/tmdb/v1/latest.json:
+    get:
+      tags: [Catalog]
+      summary: Get latest snapshot using the compatibility URL
+      operationId: getLatestJson
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogSuccess'
+        '304':
+          description: Snapshot unchanged; response has no body.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/CatalogUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /data/tmdb/v1/popular.json:
+    get:
+      tags: [Catalog]
+      summary: Get popular snapshot using the compatibility URL
+      operationId: getPopularJson
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogSuccess'
+        '304':
+          description: Snapshot unchanged; response has no body.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/CatalogUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /data/tmdb/v1/top-rated.json:
+    get:
+      tags: [Catalog]
+      summary: Get top-rated snapshot using the compatibility URL
+      operationId: getTopRatedJson
+      responses:
+        '200':
+          $ref: '#/components/responses/CatalogSuccess'
+        '304':
+          description: Snapshot unchanged; response has no body.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/CatalogUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /data/tmdb/v1/manifest.json:
+    get:
+      tags: [Manifest]
+      summary: Get manifest using the compatibility URL
+      operationId: getManifestJson
+      responses:
+        '200':
+          $ref: '#/components/responses/ManifestSuccess'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Check whether the process is alive
+      operationId: getLiveness
+      responses:
+        '200':
+          description: Process is alive.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liveness'
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Check whether all feeds are available
+      operationId: getReadiness
+      responses:
+        '200':
+          description: All feeds are available; one or more may be stale.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: At least one feed is missing.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+components:
+  headers:
+    RequestId:
+      description: Unique identifier for this request.
+      schema:
+        type: string
+        pattern: '^req_[0-9a-f-]+$'
+    ETag:
+      description: Revision-based entity tag for conditional requests.
+      schema:
+        type: string
+    CatalogRevision:
+      description: Revision of the returned catalog snapshot.
+      schema:
+        type: string
+    CatalogStale:
+      description: Whether the returned snapshot is stale.
+      schema:
+        type: string
+        enum: ['true', 'false']
+  responses:
+    CatalogSuccess:
+      description: Catalog snapshot.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+        ETag:
+          $ref: '#/components/headers/ETag'
+        X-Catalog-Revision:
+          $ref: '#/components/headers/CatalogRevision'
+        X-Catalog-Stale:
+          $ref: '#/components/headers/CatalogStale'
+        Cache-Control:
+          description: Public caching policy.
+          schema:
+            type: string
+            example: public, max-age=300, stale-while-revalidate=3600
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CatalogSnapshot'
+    ManifestSuccess:
+      description: Available feed revisions.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          description: Public caching policy.
+          schema:
+            type: string
+            example: public, max-age=60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Manifest'
+    InvalidArgument:
+      description: Missing or unsupported feed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    RateLimited:
+      description: Request limit exceeded.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+        Retry-After:
+          description: Minimum retry delay in seconds.
+          schema:
+            type: integer
+            example: 60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    CatalogUnavailable:
+      description: Feed is not available or has exceeded its retention window.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InternalError:
+      description: Unexpected server error.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    FeedName:
+      type: string
+      enum: [latest, popular, top_rated]
+    MediaType:
+      type: string
+      enum: [movie, tv]
+    Category:
+      type: string
+      enum: [movie, tv, animation, variety]
+    CatalogItem:
+      type: object
+      additionalProperties: false
+      required:
+        - tmdbId
+        - mediaType
+        - category
+        - localizedTitle
+        - originalTitle
+        - aliases
+        - releaseDate
+        - sortDate
+        - rating
+        - voteCount
+        - popularity
+        - posterPath
+      properties:
+        tmdbId:
+          type: integer
+          minimum: 1
+        mediaType:
+          $ref: '#/components/schemas/MediaType'
+        category:
+          $ref: '#/components/schemas/Category'
+        localizedTitle:
+          type: string
+          minLength: 1
+        originalTitle:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        releaseDate:
+          type: string
+          pattern: '^(|[0-9]{4}-[0-9]{2}-[0-9]{2})$'
+        sortDate:
+          type: string
+          pattern: '^(|[0-9]{4}-[0-9]{2}-[0-9]{2})$'
+        latestSeasonNumber:
+          type: integer
+          minimum: 1
+        rating:
+          type: number
+          minimum: 0
+        voteCount:
+          type: integer
+          minimum: 0
+        popularity:
+          type: number
+          minimum: 0
+        posterPath:
+          type: string
+    CatalogGroups:
+      type: object
+      additionalProperties: false
+      required: [all, movie, tv, animation, variety]
+      properties:
+        all:
+          $ref: '#/components/schemas/ItemIdList'
+        movie:
+          $ref: '#/components/schemas/ItemIdList'
+        tv:
+          $ref: '#/components/schemas/ItemIdList'
+        animation:
+          $ref: '#/components/schemas/ItemIdList'
+        variety:
+          $ref: '#/components/schemas/ItemIdList'
+    ItemIdList:
+      type: array
+      maxItems: 200
+      uniqueItems: true
+      items:
+        type: string
+        pattern: '^tmdb:(movie|tv):[1-9][0-9]*$'
+    CatalogSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - revision
+        - feed
+        - generatedAt
+        - expiresAt
+        - stale
+        - groups
+        - items
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        revision:
+          type: string
+          pattern: '^[0-9]{8}T[0-9]{6}Z$'
+        feed:
+          $ref: '#/components/schemas/FeedName'
+        generatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+        groups:
+          $ref: '#/components/schemas/CatalogGroups'
+        items:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CatalogItem'
+    FeedManifestEntry:
+      type: object
+      additionalProperties: false
+      required: [revision, generatedAt, expiresAt, stale, path]
+      properties:
+        revision:
+          type: string
+          pattern: '^[0-9]{8}T[0-9]{6}Z$'
+        generatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+        path:
+          type: string
+          enum: [latest.json, popular.json, top-rated.json]
+    ManifestFeeds:
+      type: object
+      additionalProperties: false
+      properties:
+        latest:
+          $ref: '#/components/schemas/FeedManifestEntry'
+        popular:
+          $ref: '#/components/schemas/FeedManifestEntry'
+        top_rated:
+          $ref: '#/components/schemas/FeedManifestEntry'
+    Manifest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, language, feeds]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        language:
+          type: string
+          const: zh-CN
+        feeds:
+          $ref: '#/components/schemas/ManifestFeeds'
+    FeedReadiness:
+      type: string
+      enum: [ok, stale, missing]
+    ReadinessFeeds:
+      type: object
+      additionalProperties: false
+      required: [latest, popular, top_rated]
+      properties:
+        latest:
+          $ref: '#/components/schemas/FeedReadiness'
+        popular:
+          $ref: '#/components/schemas/FeedReadiness'
+        top_rated:
+          $ref: '#/components/schemas/FeedReadiness'
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [ready, status, feeds]
+      properties:
+        ready:
+          type: boolean
+        status:
+          type: string
+          enum: [ok, degraded, unavailable]
+        feeds:
+          $ref: '#/components/schemas/ReadinessFeeds'
+    Liveness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_ARGUMENT
+                - METHOD_NOT_ALLOWED
+                - NOT_FOUND
+                - RATE_LIMITED
+                - CATALOG_UNAVAILABLE
+                - INTERNAL_ERROR
+            message:
+              type: string
+            requestId:
+              type: string
