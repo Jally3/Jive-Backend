@@ -11,7 +11,7 @@ export async function loadState(path: string | undefined): Promise<PersistedStat
     }
     for (const feed of FEEDS) {
       const snapshot = parsed.snapshots[feed];
-      if (snapshot) validateSnapshot(snapshot, feed);
+      if (snapshot) validateSnapshot(snapshot, feed, { allowLegacyMetadata: true });
     }
     return parsed;
   } catch (error) {
@@ -28,7 +28,11 @@ export async function saveState(path: string | undefined, state: PersistedState)
   await rename(temporary, path);
 }
 
-function validateSnapshot(snapshot: CatalogSnapshot, feed: string): void {
+export function validateSnapshot(
+  snapshot: CatalogSnapshot,
+  feed: string,
+  options: { allowLegacyMetadata?: boolean } = {},
+): void {
   if (
     snapshot.schemaVersion !== 1 ||
     snapshot.feed !== feed ||
@@ -50,4 +54,32 @@ function validateSnapshot(snapshot: CatalogSnapshot, feed: string): void {
     }
   }
   if (snapshot.groups.all.length === 0) throw new Error(`empty persisted snapshot for ${feed}`);
+  for (const [id, item] of Object.entries(snapshot.items)) {
+    if (id !== `tmdb:${item.mediaType}:${item.tmdbId}`) {
+      throw new Error(`invalid item id in ${feed}`);
+    }
+    const hasLanguage = Object.hasOwn(item, 'originalLanguage');
+    const hasCountries = Object.hasOwn(item, 'originCountries');
+    if (!options.allowLegacyMetadata && (!hasLanguage || !hasCountries)) {
+      throw new Error(`missing language metadata in ${feed}.${id}`);
+    }
+    if (
+      hasLanguage &&
+      (typeof item.originalLanguage !== 'string' ||
+        (item.originalLanguage !== '' && !/^[a-z]{2}$/.test(item.originalLanguage)))
+    ) {
+      throw new Error(`invalid originalLanguage in ${feed}.${id}`);
+    }
+    if (hasCountries) {
+      if (
+        !Array.isArray(item.originCountries) ||
+        item.originCountries.some(
+          (country) => typeof country !== 'string' || !/^[A-Z]{2}$/.test(country),
+        ) ||
+        new Set(item.originCountries).size !== item.originCountries.length
+      ) {
+        throw new Error(`invalid originCountries in ${feed}.${id}`);
+      }
+    }
+  }
 }

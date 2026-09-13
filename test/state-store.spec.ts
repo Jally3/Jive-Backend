@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadState, saveState } from '../src/state-store.js';
+import { loadState, saveState, validateSnapshot } from '../src/state-store.js';
 import type { CatalogSnapshot } from '../src/types.js';
 
 describe('state store', () => {
@@ -23,6 +23,18 @@ describe('state store', () => {
     await saveState(path, { schemaVersion: 1, snapshots: { popular: snapshot } });
     await expect(loadState(path)).rejects.toThrow('missing item');
   });
+
+  it('restores legacy metadata but requires it for newly generated snapshots', async () => {
+    const snapshot = fixture();
+    const item = snapshot.items['tmdb:movie:1'] as Partial<(typeof snapshot.items)['tmdb:movie:1']>;
+    delete item.originalLanguage;
+    delete item.originCountries;
+
+    expect(() =>
+      validateSnapshot(snapshot, 'popular', { allowLegacyMetadata: true }),
+    ).not.toThrow();
+    expect(() => validateSnapshot(snapshot, 'popular')).toThrow('missing language metadata');
+  });
 });
 
 function fixture(): CatalogSnapshot {
@@ -41,6 +53,8 @@ function fixture(): CatalogSnapshot {
         category: 'movie',
         localizedTitle: '测试',
         originalTitle: 'Test',
+        originalLanguage: 'en',
+        originCountries: ['US'],
         aliases: [],
         releaseDate: '2026-08-01',
         sortDate: '2026-08-01',

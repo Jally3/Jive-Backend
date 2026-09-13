@@ -20,11 +20,11 @@ GET /api/tmdb/v1/catalog?feed=top_rated
 
 Feed 与产品 Tab 的对应关系：
 
-| 客户端 Tab | `feed`      | 含义                             | 服务端刷新周期 |
-| ---------- | ----------- | -------------------------------- | -------------: |
-| 最新       | `latest`    | 最近上映、开播或更新新一集的内容 |           1 天 |
-| 热门       | `popular`   | TMDB 最近一周趋势内容            |           3 天 |
-| 高分       | `top_rated` | 评分不低于 7 且票数不低于 200    |           7 天 |
+| 客户端 Tab | `feed`      | 含义                                              | 服务端刷新周期 |
+| ---------- | ----------- | ------------------------------------------------- | -------------: |
+| 最新       | `latest`    | 最近上映、开播或更新新一集的内容                  |           1 天 |
+| 热门       | `popular`   | TMDB 最近一周趋势内容                             |           3 天 |
+| 高分       | `top_rated` | 评分不低于 7；综艺至少 20 票，其他内容至少 200 票 |           7 天 |
 
 最小请求示例：
 
@@ -80,6 +80,8 @@ GET /api/tmdb/v1/catalog?feed={feed}
       "category": "movie",
       "localizedTitle": "示例电影",
       "originalTitle": "Example Movie",
+      "originalLanguage": "en",
+      "originCountries": ["US"],
       "aliases": [],
       "releaseDate": "2026-08-01",
       "sortDate": "2026-08-01",
@@ -94,6 +96,8 @@ GET /api/tmdb/v1/catalog?feed={feed}
       "category": "tv",
       "localizedTitle": "示例剧集",
       "originalTitle": "Example Show",
+      "originalLanguage": "en",
+      "originCountries": ["US"],
       "aliases": [],
       "releaseDate": "2026-07-15",
       "sortDate": "2026-09-08",
@@ -132,6 +136,15 @@ GET /api/tmdb/v1/catalog?feed={feed}
 | `animation` | 动画电影或动画电视内容                     |
 | `variety`   | 综艺、真人秀、脱口秀等电视内容             |
 
+综艺分组仅保留 TMDB 原始语言为中文（`zh`）、日语（`ja`）或韩语（`ko`）的内容；
+其他语言或原始语言缺失的综艺不会进入榜单。该限制不影响电影、普通电视剧和动画。
+三个榜单都会按这三种语言分别请求限定 Genre 的综艺候选，每个请求都使用
+`TMDB_PAGES` 配置的页数，然后与各榜单的通用候选池合并去重。具体排序规则如下：
+
+- 最新：新开播综艺使用首播日期；正在播出的老综艺查询详情后使用最新一集日期。
+- 热门：按 TMDB 热度降序。
+- 高分：按评分、票数降序，综艺最低 20 票。
+
 数组顺序就是客户端展示顺序，每组最多 200 个 ID。同一内容会出现在 `all` 和一个具体分类中；
 具体分类之间互斥。客户端应遍历目标 `groups[group]`，再用 ID 从 `items` 查详情：
 
@@ -152,6 +165,8 @@ groups.movie = ["tmdb:movie:550"]
 | `category`           | `movie \| tv \| animation \| variety` | 否              | Jive 展示分类                                        |
 | `localizedTitle`     | string                                | 否              | 优先使用中文标题，无中文时回退原始标题               |
 | `originalTitle`      | string                                | 可能为空字符串  | 原始标题                                             |
+| `originalLanguage`   | string                                | 旧快照可缺省    | TMDB 原始语言；新快照固定输出小写代码或空字符串      |
+| `originCountries`    | string[]                              | 旧快照可缺省    | 来源国家/地区；新快照固定输出大写、去重代码          |
 | `aliases`            | string[]                              | 可能为空数组    | 预留别名列表                                         |
 | `releaseDate`        | `YYYY-MM-DD` string                   | 可能为空字符串  | 电影上映日或剧集首播日                               |
 | `sortDate`           | `YYYY-MM-DD` string                   | 可能为空字符串  | 当前 Feed 使用的排序日期；老剧新季通常是最新一集日期 |
@@ -424,6 +439,8 @@ interface CatalogItem {
   category: Category;
   localizedTitle: string;
   originalTitle: string;
+  originalLanguage?: string;
+  originCountries?: string[];
   aliases: string[];
   releaseDate: string;
   sortDate: string;

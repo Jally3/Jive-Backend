@@ -9,6 +9,8 @@ export interface CatalogItem {
   category: Category;
   localizedTitle: string;
   originalTitle: string;
+  originalLanguage: string;
+  originCountries: string[];
   aliases: string[];
   releaseDate: string;
   sortDate: string;

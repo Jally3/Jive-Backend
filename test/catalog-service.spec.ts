@@ -92,6 +92,8 @@ function fixture(feed: FeedName): CatalogSnapshot {
         category: 'movie',
         localizedTitle: '测试',
         originalTitle: 'Test',
+        originalLanguage: 'en',
+        originCountries: ['US'],
         aliases: [],
         releaseDate: '2026-08-01',
         sortDate: '2026-08-01',

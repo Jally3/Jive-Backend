@@ -1,7 +1,8 @@
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 import { CATALOG_POLICY, retryDelayMs } from './catalog-policy.js';
 import type { Logger } from './logger.js';
-import { loadState, saveState } from './state-store.js';
+import type { MonitoringObserver } from './monitoring-types.js';
+import { loadState, saveState, validateSnapshot } from './state-store.js';
 import { FEEDS, type CatalogSnapshot, type FeedName, type PersistedState } from './types.js';
 
 export interface EncodedSnapshot {
@@ -14,6 +15,27 @@ export interface EncodedSnapshot {
 
 export interface SnapshotGenerator {
   generate(feed: FeedName, now?: Date): Promise<CatalogSnapshot>;
+  lastReport?(): unknown;
+}
+
+export interface CatalogDiagnostics {
+  stateFile: { enabled: boolean; path?: string };
+  feeds: Record<
+    FeedName,
+    {
+      available: boolean;
+      refreshing: boolean;
+      consecutiveFailures: number;
+      retryAfter?: string;
+      revision?: string;
+      generatedAt?: string;
+      expiresAt?: string;
+      stale?: boolean;
+      itemCount?: number;
+      groupCounts?: Record<string, number>;
+      sizes?: { jsonBytes: number; gzipBytes: number; brotliBytes: number };
+    }
+  >;
 }
 
 export class CatalogService {
@@ -28,6 +50,7 @@ export class CatalogService {
     private readonly generator: SnapshotGenerator,
     private readonly logger: Logger,
     private readonly stateFile?: string,
+    private readonly monitoring?: MonitoringObserver,
   ) {}
 
   async start(): Promise<void> {
@@ -96,6 +119,51 @@ export class CatalogService {
     return { ready, status: ready ? (stale ? 'degraded' : 'ok') : 'unavailable', feeds };
   }
 
+  diagnostics(now = Date.now()): CatalogDiagnostics {
+    const feeds = Object.fromEntries(
+      FEEDS.map((feed) => {
+        const encoded = this.get(feed, now);
+        const retryAfter = this.retryAfter.get(feed);
+        return [
+          feed,
+          {
+            available: Boolean(encoded),
+            refreshing: this.active.has(feed),
+            consecutiveFailures: this.consecutiveFailures.get(feed) ?? 0,
+            ...(retryAfter ? { retryAfter: new Date(retryAfter).toISOString() } : {}),
+            ...(encoded
+              ? {
+                  revision: encoded.snapshot.revision,
+                  generatedAt: encoded.snapshot.generatedAt,
+                  expiresAt: encoded.snapshot.expiresAt,
+                  stale: encoded.snapshot.stale,
+                  itemCount: Object.keys(encoded.snapshot.items).length,
+                  groupCounts: Object.fromEntries(
+                    Object.entries(encoded.snapshot.groups).map(([name, ids]) => [
+                      name,
+                      ids.length,
+                    ]),
+                  ),
+                  sizes: {
+                    jsonBytes: encoded.json.byteLength,
+                    gzipBytes: encoded.gzip.byteLength,
+                    brotliBytes: encoded.br.byteLength,
+                  },
+                }
+              : {}),
+          },
+        ];
+      }),
+    ) as CatalogDiagnostics['feeds'];
+    return {
+      stateFile: {
+        enabled: Boolean(this.stateFile),
+        ...(this.stateFile ? { path: this.stateFile } : {}),
+      },
+      feeds,
+    };
+  }
+
   refresh(feed: FeedName): Promise<void> {
     const running = this.active.get(feed);
     if (running) return running;
@@ -127,6 +195,7 @@ export class CatalogService {
     this.logger.info('catalog refresh started', { feed });
     try {
       const snapshot = await this.generator.generate(feed);
+      validateSnapshot(snapshot, feed);
       const encoded = encode(snapshot);
       if (encoded.json.byteLength > 1_048_576) throw new Error('snapshot exceeds 1 MiB');
       const next = Object.fromEntries(
@@ -145,11 +214,22 @@ export class CatalogService {
         items: Object.keys(snapshot.items).length,
         durationMs: Date.now() - started,
       });
+      this.monitoring?.recordCatalogRefresh({
+        feed,
+        success: true,
+        durationMs: Date.now() - started,
+        itemCount: Object.keys(snapshot.items).length,
+        jsonBytes: encoded.json.byteLength,
+        gzipBytes: encoded.gzip.byteLength,
+        brotliBytes: encoded.br.byteLength,
+      });
+      this.logGenerationReport();
     } catch (error) {
       const failureCount = (this.consecutiveFailures.get(feed) ?? 0) + 1;
       const retryInMs = retryDelayMs(failureCount);
       this.consecutiveFailures.set(feed, failureCount);
       this.retryAfter.set(feed, Date.now() + retryInMs);
+      this.logGenerationReport();
       this.logger.error('catalog refresh failed', {
         feed,
         durationMs: Date.now() - started,
@@ -157,7 +237,36 @@ export class CatalogService {
         retryInMs,
         error: errorMessage(error),
       });
+      this.monitoring?.recordCatalogRefresh({
+        feed,
+        success: false,
+        durationMs: Date.now() - started,
+        error: errorMessage(error),
+      });
       throw error;
+    }
+  }
+
+  private logGenerationReport(): void {
+    const report = this.generator.lastReport?.();
+    if (!report || typeof report !== 'object') return;
+    const fields = report as Record<string, unknown>;
+    const samples = Array.isArray(fields.excludedSamples) ? fields.excludedSamples : [];
+    const warnings = Array.isArray(fields.metadataWarnings) ? fields.metadataWarnings : [];
+    this.logger.info('catalog generation report', {
+      ...fields,
+      excludedSamples: samples.length,
+      metadataWarnings: warnings.length,
+    });
+    for (const sample of samples) {
+      if (sample && typeof sample === 'object') {
+        this.logger.info('catalog item excluded', sample as Record<string, unknown>);
+      }
+    }
+    for (const warning of warnings) {
+      if (warning && typeof warning === 'object') {
+        this.logger.warn('catalog item metadata degraded', warning as Record<string, unknown>);
+      }
     }
   }
 }

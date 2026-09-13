@@ -292,6 +292,17 @@ components:
           minLength: 1
         originalTitle:
           type: string
+        originalLanguage:
+          type: string
+          pattern: '^(|[a-z]{2})$'
+          description: Present on newly generated snapshots; legacy snapshots may omit it.
+        originCountries:
+          type: array
+          uniqueItems: true
+          description: Present on newly generated snapshots; legacy snapshots may omit it.
+          items:
+            type: string
+            pattern: '^[A-Z]{2}$'
         aliases:
           type: array
           items:
@@ -330,7 +341,9 @@ components:
         animation:
           $ref: '#/components/schemas/ItemIdList'
         variety:
-          $ref: '#/components/schemas/ItemIdList'
+          allOf:
+            - $ref: '#/components/schemas/ItemIdList'
+          description: Variety shows whose TMDB original language is zh, ja, or ko.
     ItemIdList:
       type: array
       maxItems: 200
