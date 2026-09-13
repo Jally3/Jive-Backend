@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { EncodedSnapshot } from '../src/catalog-service.js';
 import { createCatalogServer, type CatalogReader } from '../src/http-server.js';
 import { Logger } from '../src/logger.js';
+import { MonitoringService } from '../src/monitoring-service.js';
 import type { CatalogSnapshot, FeedName } from '../src/types.js';
 
 const servers: ReturnType<typeof createCatalogServer>[] = [];
@@ -55,6 +56,44 @@ describe('catalog HTTP server', () => {
     expect((await fetch(`${base}/health/ready`)).status).toBe(200);
     expect((await fetch(`${base}/api/tmdb/v1/catalog?feed=wrong`)).status).toBe(400);
   });
+
+  it('serves the manually refreshed admin overview and records normalized routes', async () => {
+    const monitoring = new MonitoringService({
+      logger: new Logger('error'),
+      retentionDays: 90,
+      timezone: 'Asia/Shanghai',
+      saveIntervalMs: 60_000,
+    });
+    await monitoring.start();
+    const server = createCatalogServer({
+      catalog: reader(fixture()),
+      logger: new Logger('error'),
+      rateLimitPerMinute: 10,
+      trustProxy: false,
+      monitoring,
+      adminEnabled: true,
+      tmdbDiagnostics: () => ({ detailCacheEntries: 2 }),
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing test address');
+    const base = `http://127.0.0.1:${address.port}`;
+
+    expect((await fetch(`${base}/admin`)).status).toBe(200);
+    expect((await fetch(`${base}/api/tmdb/v1/catalog?feed=popular`)).status).toBe(200);
+    const response = await fetch(`${base}/admin/api/overview?days=7`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as any;
+    expect(body.tmdb.detailCacheEntries).toBe(2);
+    expect(body.history.days[0].metrics.http['catalog/popular'].requests).toBe(1);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const items = await fetch(
+      `${base}/admin/api/catalog/items?feed=popular&group=movie&page=1&pageSize=20`,
+    );
+    expect(items.status).toBe(200);
+    expect(((await items.json()) as { total: number }).total).toBe(1);
+  });
 });
 
 function reader(encoded: EncodedSnapshot): CatalogReader {
@@ -81,6 +120,8 @@ function fixture(): EncodedSnapshot {
         category: 'movie',
         localizedTitle: '测试',
         originalTitle: 'Test',
+        originalLanguage: 'en',
+        originCountries: ['US'],
         aliases: [],
         releaseDate: '2026-08-01',
         sortDate: '2026-08-01',
