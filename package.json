@@ -1,6 +1,6 @@
 {
   "name": "jive-tmdb-catalog-lite",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.28.2",
@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "release": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build && node scripts/package-release.mjs",
     "start": "node dist/apps/catalog/src/main.js",
     "dev": "tsx watch apps/catalog/src/main.ts",
     "lint": "eslint . --max-warnings=0",

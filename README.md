@@ -27,6 +27,8 @@ GET /data/tmdb/v1/manifest.json
 GET /health/live
 GET /health/ready
 GET /metrics
+GET /admin/
+GET /admin/api/overview?days=30
 ```
 
 `.json` 兼容路径由内存动态返回，不生成对外静态文件。Catalog 请求不会实时访问 TMDB；
@@ -47,23 +49,32 @@ Node 不会自动读取 `.env`。本地可以通过 shell 加载，生产环境�
 
 ## 配置
 
-| 环境变量                  | 默认值         | 说明                             |
-| ------------------------- | -------------- | -------------------------------- |
-| `TMDB_READ_ACCESS_TOKEN`  | 必填           | TMDB Read Access Token           |
-| `PORT`                    | `3000`         | 监听端口                         |
-| `HOST`                    | `127.0.0.1`    | 默认只供本机反向代理访问         |
-| `TMDB_API_BASE_URL`       | 官方 v3 地址   | 测试或代理地址                   |
-| `TMDB_CONCURRENCY`        | `2`            | 上游并发，最大4                  |
-| `TMDB_PAGES`              | `5`            | 每个列表最多扫描页数，最大10     |
-| `TMDB_REQUEST_TIMEOUT_MS` | `10000`        | 单次请求超时，最大30秒           |
-| `PUBLIC_RATE_LIMIT_MAX`   | `120`          | 每个远端地址每分钟请求数         |
-| `TRUST_PROXY`             | `false`        | 是否信任反向代理传入的客户端地址 |
-| `CATALOG_STATE_FILE`      | 应用默认不启用 | 可选的单文件重启恢复状态         |
-| `LOG_LEVEL`               | `info`         | JSON日志等级                     |
+| 环境变量                      | 默认值          | 说明                                 |
+| ----------------------------- | --------------- | ------------------------------------ |
+| `TMDB_READ_ACCESS_TOKEN`      | 必填            | TMDB Read Access Token               |
+| `PORT`                        | `3000`          | 监听端口                             |
+| `HOST`                        | `127.0.0.1`     | 默认只供本机反向代理访问             |
+| `TMDB_API_BASE_URL`           | 官方 v3 地址    | 测试或代理地址                       |
+| `TMDB_CONCURRENCY`            | `4`             | 列表与 Detail 共用的上游并发，最大4  |
+| `TMDB_PAGES`                  | `5`             | 每个列表最多扫描页数，最大10         |
+| `TMDB_REQUEST_TIMEOUT_MS`     | `10000`         | 单次请求超时，最大30秒               |
+| `PUBLIC_RATE_LIMIT_MAX`       | `120`           | 每个远端地址每分钟请求数             |
+| `TRUST_PROXY`                 | `false`         | 是否信任反向代理传入的客户端地址     |
+| `CATALOG_STATE_FILE`          | 应用默认不启用  | 可选的单文件重启恢复状态             |
+| `LOG_LEVEL`                   | `info`          | JSON日志等级                         |
+| `ADMIN_ENABLED`               | `false`         | 启用只读监控后台；必须由反向代理鉴权 |
+| `MONITORING_STATE_FILE`       | 应用默认不启用  | 每日监控聚合的独立状态文件           |
+| `MONITORING_RETENTION_DAYS`   | `90`            | 每日统计保留天数                     |
+| `MONITORING_TIMEZONE`         | `Asia/Shanghai` | 每日统计的日期时区                   |
+| `MONITORING_SAVE_INTERVAL_MS` | `60000`         | 事件触发保存的最小间隔               |
 
 设置 `CATALOG_STATE_FILE` 时，状态只用于服务重启恢复，不作为HTTP静态文件发布。写入采用
 临时文件加原子重命名。留空则为纯内存模式，进程重启后需要重新预热。
 生产 systemd 单元默认启用 `/var/lib/jive-catalog/state.json`，避免重启打断 1～7 天的刷新周期。
+
+监控后台不进行前端轮询：打开页面时读取一次，之后只有点击“刷新数据”才会再次读取。HTTP、TMDB
+和榜单刷新指标在事件发生时写入内存，并限频原子保存到独立的 `monitoring.json`。部署和鉴权方式见
+[后台监控部署说明](./docs/ADMIN_MONITORING.md)。
 
 ## 刷新与降级策略
 
@@ -86,7 +97,14 @@ pnpm test
 pnpm build
 ```
 
-生产服务器只需上传 `dist`、`package.json` 和 systemd 配置，然后使用 Node直接启动：
+正式发布前先更新 `package.json` 的语义版本，再运行统一发布命令：
+
+```bash
+pnpm release
+```
+
+发布包和 SHA-256 文件会生成在 `artifacts/`，同一版本不会被覆盖。生产服务器只需使用包内的
+`dist`、`package.json` 和 systemd 配置，然后通过 Node 启动：
 
 ```bash
 node dist/apps/catalog/src/main.js

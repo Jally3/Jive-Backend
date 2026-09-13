@@ -38,12 +38,21 @@ Jive-Backend/
 │       └── src/
 │           └── main.ts                 # 唯一进程入口；组装依赖、监听端口、处理退出信号
 ├── src/
-│   ├── catalog.ts                      # 榜单生成规则；清洗、分类、排序、去重并生成快照
+│   ├── catalog.ts                      # CatalogGenerator 编排入口；保留稳定的公共导出
+│   ├── catalog/
+│   │   ├── domain.ts                   # 候选项、报告、上游接口、常量和业务阈值
+│   │   ├── normalize.ts                # TMDB 字段清洗、语言/地区归一化和 Detail 合并
+│   │   ├── grouping.ts                 # 分组、排序、去重、配额校验和快照构建
+│   │   └── report.ts                   # 生成统计、排除样本和元数据告警
 │   ├── catalog-policy.ts               # 三个 Feed 的刷新、过期、保留和失败退避策略
 │   ├── catalog-service.ts              # 快照生命周期；定时刷新、缓存、过期降级、压缩与持久化
+│   ├── admin-page.ts                   # 零前端依赖的只读后台监控页面
 │   ├── config.ts                       # 读取、校验环境变量并提供安全默认值
 │   ├── http-server.ts                  # HTTP 路由、限流、健康检查、指标、ETag 和压缩协商
 │   ├── logger.ts                       # 输出一行一个 JSON 的结构化日志
+│   ├── monitoring-service.ts           # HTTP/TMDB/刷新指标的每日聚合与保留策略
+│   ├── monitoring-store.ts             # 监控状态的校验、恢复和原子保存
+│   ├── monitoring-types.ts             # 监控事件、每日指标和持久化结构
 │   ├── state-store.ts                  # 可选状态文件的原子写入、恢复及结构校验
 │   ├── tmdb-client.ts                  # TMDB 客户端；鉴权、分页、并发限制、超时与重试
 │   └── types.ts                        # Feed、条目、快照和持久化状态的共享类型与标识工具
@@ -53,16 +62,20 @@ Jive-Backend/
 │   ├── catalog-service.spec.ts         # 验证刷新、落盘恢复、过期标记和失败保留旧快照
 │   ├── config.spec.ts                  # 验证配置默认值、必填凭证和范围约束
 │   ├── http-server.spec.ts             # 验证兼容路由、压缩、ETag/304 和就绪状态
-│   └── state-store.spec.ts             # 验证状态原子存取及悬空条目引用校验
+│   ├── monitoring-service.spec.ts       # 验证监控聚合、时区、保留和持久化
+│   ├── state-store.spec.ts              # 验证状态原子存取及悬空条目引用校验
+│   └── tmdb-client.spec.ts              # 验证 TMDB Detail 缓存和请求合并
 ├── deploy/
 │   ├── README.md                       # 部署文档入口和生产形态摘要
 │   ├── DEPLOYMENT_RUNBOOK.md           # 当前服务器首次部署、升级、验证与回滚手册
 │   └── jive-catalog.service            # systemd 单元；进程权限、资源限制和重启策略
 ├── docs/
+│   ├── ADMIN_MONITORING.md              # 后台监控的数据口径、鉴权和部署说明
 │   ├── CLIENT_API.md                    # 给客户端开发者的接口、缓存和错误处理说明
 │   └── openapi.yaml                     # 可导入工具和代码生成器的 OpenAPI 3.1 契约
 ├── scripts/
-│   └── clean.mjs                       # 构建前删除 dist，防止旧产物残留
+│   ├── clean.mjs                       # 构建前删除 dist，防止旧产物残留
+│   └── package-release.mjs             # 生成版本化发布包和 SHA-256 校验文件
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                      # GitHub Actions：安装、检查、测试和构建
@@ -75,13 +88,15 @@ Jive-Backend/
 ├── pnpm-lock.yaml                      # 锁定依赖的精确版本，保证安装和 CI 可复现
 ├── tsconfig.json                       # 开发与类型检查共用的严格 TypeScript 配置
 ├── tsconfig.build.json                 # 生产构建配置；继承主配置并排除测试
+├── artifacts/                          # 本地发布产物；由 pnpm release 生成，不提交 Git
 ├── README.md                           # 面向使用者的接口、配置、运行和部署概览
 ├── NODE_BACKEND_LEARNING_GUIDE.md      # 面向初学者的项目式 Node.js 后端学习说明书
 └── PROJECT_MAP.md                      # 本文档；面向开发者的代码导航
 ```
 
-本地可能出现 `.DS_Store`、`.pnpm-store/`、`node_modules/`、`dist/` 和 `coverage/`。它们分别是
-系统元数据、本地 pnpm 缓存、安装依赖、编译产物和覆盖率报告，不属于业务源码，也不应提交。
+本地可能出现 `.DS_Store`、`.pnpm-store/`、`node_modules/`、`dist/`、`coverage/` 和 `artifacts/`。
+它们分别是系统元数据、本地 pnpm 缓存、安装依赖、编译产物、覆盖率报告和发布包，不属于业务源码，
+也不应提交。
 
 ## 启动流程
 
@@ -105,10 +120,11 @@ Jive-Backend/
 每分钟 tick
   └─ 找到一个到期 Feed（同一时刻串行刷新）
       └─ CatalogGenerator.generate(feed)
-          ├─ latest    → 近 180 天电影/新剧 + 正在播出的老剧新季
-          ├─ popular   → 本周电影与剧集 Trending
-          └─ top_rated → 评分 ≥ 7 且票数 ≥ 200 的电影与剧集
-              └─ 标准化 → 过滤成人/无标题 → 分类 → 去重 → 排序 → 最多 200 条/组
+          ├─ latest    → 近 180 天新作 + 最近 14 天更新的合格老作品，按 14:6 分块
+          ├─ popular   → 本周电影与剧集 Trending + 中日韩综艺候选池
+          └─ top_rated → 评分 ≥ 7；电影/普通剧集票数 ≥ 200，中日韩综艺票数 ≥ 20
+              └─ 规范语言/地区 → 过滤成人/无标题 → Detail 补全 → 分类/去重/排序
+                  └─ latest 五组独立配额；其他 Feed 每组最多 200 条
                   └─ JSON 编码并预生成 gzip、Brotli 和 ETag
                       └─ 可选原子落盘
                           └─ 成功后替换内存快照
@@ -152,17 +168,22 @@ Composition Root（组装入口）。这里决定具体使用哪些实现，但�
 
 ### `src/tmdb-client.ts`
 
-唯一接触 TMDB HTTP API 的模块。第一页先确定总页数，后续页面并行获取，但全局通过 `Semaphore` 限制
-并发。可重试 429 和常见 5xx，最多三次；4xx 等确定性错误不重试；同时限制超时与 2 MB 响应体。
+唯一接触 TMDB HTTP API 的模块。第一页先确定总页数，后续页面并行获取，但列表和 Detail 全局共用
+`Semaphore` 限制并发。可重试 429 和常见 5xx，最多三次；4xx 等确定性错误不重试；同时限制超时与
+2 MB 响应体。Movie/TV Detail 支持同 Key 在途合并、成功/失败 TTL 缓存和请求统计。
 
 ### `src/catalog.ts`
 
 领域逻辑中心。它把不稳定、字段可缺失的 TMDB 数据转换为稳定的 Catalog 数据：
 
-- `latest` 组合近期首映内容与仍在更新的旧剧，并以最新一集日期作为老剧新季的排序日期。
-- `popular` 合并电影和电视周趋势，按热度排序。
-- `top_rated` 设置最低评分和票数门槛，按评分、票数排序。
-- 动画优先归入 `animation`；电视真人秀/脱口秀等归入 `variety`；其余归入 `movie` 或 `tv`。
+- `latest` 将最近 180 天首映内容与最近 14 天更新的老作品分池；清理非华语 Soap、超长和高频日播
+  普通电视剧，五个分组独立按每 20 条最多 6 条 returning 的规则稳定合并。
+- `popular` 合并电影和电视周趋势，同时为中日韩综艺分别请求按热度排序的限定 Genre 候选池，
+  全部候选合并去重后按热度排序。
+- `top_rated` 为中文、日语、韩语综艺分别请求限定 Genre 的候选池，综艺最低 20 票，
+  电影和普通剧集最低 200 票，合并后按评分、票数排序。
+- 动画优先归入 `animation`；电视真人秀/脱口秀等归入 `variety`；综艺只接受 zh/ja/ko；其余归入
+  `movie` 或 `tv`。所有新快照 Item 都输出原始语言和来源国家/地区。
 - `all` 是总榜，分类组互斥；每组最多 200 个 ID，实体内容统一存放在 `items` 字典中。
 
 ### `src/catalog-service.ts`
@@ -173,7 +194,8 @@ Composition Root（组装入口）。这里决定具体使用哪些实现，但�
 ### `src/state-store.ts`
 
 可选的重启恢复层。写入时先生成同目录 `.tmp` 文件，再 `rename` 原子替换目标文件；读取时验证版本、
-Feed 对应关系、组大小、重复 ID 和组内 ID 是否都能在 `items` 中找到。未配置路径时所有操作都是空操作。
+Feed 对应关系、组大小、重复 ID 和组内 ID 是否都能在 `items` 中找到。恢复旧状态时允许缺少新增语言
+字段；保存新快照前使用严格模式校验字段格式。未配置路径时所有操作都是空操作。
 
 ### `src/http-server.ts`
 
@@ -187,18 +209,44 @@ Feed 对应关系、组大小、重复 ID 和组内 ID 是否都能在 `items` �
 
 ## 修改需求时去哪里
 
-| 需求                         | 首要文件                             | 通常一起检查                                     |
-| ---------------------------- | ------------------------------------ | ------------------------------------------------ |
-| 增加或修改 Feed              | `src/types.ts`、`src/catalog.ts`     | `src/catalog-service.ts`、路由、所有相关测试     |
-| 调整榜单筛选/分类/排序       | `src/catalog.ts`                     | `test/catalog.spec.ts`                           |
-| 调整 TMDB 请求、重试或分页   | `src/tmdb-client.ts`                 | 配置与上游模拟测试                               |
-| 修改刷新频率、过期或降级策略 | `src/catalog-service.ts`             | `test/catalog-service.spec.ts`                   |
-| 增加接口或响应头             | `src/http-server.ts`                 | `test/http-server.spec.ts`、`README.md`          |
-| 增加环境变量                 | `src/config.ts`、`.env.example`      | `test/config.spec.ts`、`README.md`、部署环境文件 |
-| 修改持久化格式               | `src/types.ts`、`src/state-store.ts` | schemaVersion、恢复测试和兼容策略                |
-| 修改启动/优雅退出            | `apps/catalog/src/main.ts`           | systemd 单元、健康检查                           |
-| 修改生产部署                 | `deploy/jive-catalog.service`        | `deploy/README.md`、根 `README.md`               |
-| 修改检查/构建命令            | `package.json`                       | CI、TypeScript/ESLint/Prettier 配置              |
+| 需求                         | 首要文件                                | 通常一起检查                                     |
+| ---------------------------- | --------------------------------------- | ------------------------------------------------ |
+| 增加或修改 Feed              | `src/types.ts`、`src/catalog.ts`        | `src/catalog/`、CatalogService、路由和相关测试   |
+| 调整榜单编排                 | `src/catalog.ts`                        | `src/catalog/`、`test/catalog.spec.ts`           |
+| 调整字段清洗或语言地区判断   | `src/catalog/normalize.ts`              | `src/catalog/domain.ts`、Catalog 测试            |
+| 调整分类、排序、去重或配额   | `src/catalog/grouping.ts`               | `src/catalog/domain.ts`、Catalog 测试            |
+| 调整生成报告或排除样本       | `src/catalog/report.ts`                 | `src/catalog/domain.ts`、后台监控                |
+| 调整 TMDB 请求、重试或分页   | `src/tmdb-client.ts`                    | 配置与上游模拟测试                               |
+| 修改刷新频率、过期或降级策略 | `src/catalog-service.ts`                | `test/catalog-service.spec.ts`                   |
+| 增加接口或响应头             | `src/http-server.ts`                    | `test/http-server.spec.ts`、`README.md`          |
+| 修改后台监控                 | `src/admin-page.ts`、`src/monitoring-*` | HTTP 测试、监控文档和 systemd 配置               |
+| 增加环境变量                 | `src/config.ts`、`.env.example`         | `test/config.spec.ts`、`README.md`、部署环境文件 |
+| 修改持久化格式               | `src/types.ts`、`src/state-store.ts`    | schemaVersion、恢复测试和兼容策略                |
+| 修改启动/优雅退出            | `apps/catalog/src/main.ts`              | systemd 单元、健康检查                           |
+| 修改生产部署                 | `deploy/jive-catalog.service`           | `deploy/README.md`、根 `README.md`               |
+| 修改检查/构建命令            | `package.json`                          | CI、TypeScript/ESLint/Prettier 配置              |
+| 修改发布包内容               | `scripts/package-release.mjs`           | `package.json`、部署运行手册                     |
+
+## 目录与项目地图维护规范
+
+1. `apps/` 只放进程入口和依赖组装，不承载业务规则。
+2. `src/` 根目录保留跨功能公共模块和稳定入口；同一领域超过约 500 行或包含三个以上独立职责时，拆到
+   同名子目录。
+3. `src/catalog.ts` 是 Catalog 的稳定入口。调用方默认从这里导入，不跨目录依赖内部实现；
+   `src/catalog/` 内部模块可以互相协作，但不得反向依赖 `apps/`。
+4. 持久化、HTTP、TMDB 等外部边界与纯业务规则分离。纯规则模块不得直接读取环境变量、文件或网络。
+5. 测试集中在 `test/`，文件名与被测公共模块对应。内部拆分不要求机械增加测试文件，优先测试可观察行为。
+6. `dist/`、`coverage/`、`artifacts/`、依赖目录和本机状态不得提交 Git。发布包只能由
+   `pnpm release` 生成到 `artifacts/`。
+7. 新增、删除、移动模块或改变模块职责时，必须在同一变更中更新本文件的目录树、“修改需求时去哪里”
+   表格；接口变化还要同步 `docs/openapi.yaml` 和对应说明文档。
+8. 正式发布必须先更新 `package.json` 的语义版本。相同版本的发布包禁止覆盖，脚本会主动拒绝。
+
+## 结构变更记录
+
+| 日期       | 版本  | 变更                                                                                                                                 | 兼容性                                                     |
+| ---------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 2026-09-13 | 1.0.4 | 将 Catalog 的领域定义、归一化、分组排序和报告逻辑拆入 `src/catalog/`；新增统一发布脚本与 `artifacts/` 目录规范；补齐后台监控项目地图 | `src/catalog.ts` 的公共导出保持不变；HTTP 和持久化格式不变 |
 
 ## 推荐阅读顺序
 
@@ -223,6 +271,7 @@ pnpm lint           # ESLint 检查
 pnpm format:check   # 检查格式，不修改文件
 pnpm build          # 清理 dist 后编译生产代码
 pnpm start          # 运行已经生成的 dist 产物
+pnpm release        # 完整检查后生成 artifacts/ 下的发布包与 SHA-256
 ```
 
 提交前建议依次执行 `pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build`。

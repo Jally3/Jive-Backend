@@ -107,29 +107,20 @@ PUBLIC_RATE_LIMIT_MAX=600
 
 ## 5. 发布前构建
 
-开发机要求 Node.js 24 和 pnpm 10。在仓库根目录执行：
+开发机要求 Node.js 24 和 pnpm 10。在仓库根目录安装依赖：
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm lint
-pnpm format:check
-pnpm typecheck
-pnpm test
-pnpm build
 ```
 
-生成发布包：
+更新 `package.json` 中的语义版本后执行统一发布命令：
 
 ```bash
-release_version=1.0.1
-
-tar -czf "jive-catalog-${release_version}.tar.gz" \
-  dist \
-  package.json \
-  deploy/jive-catalog.service
-
-shasum -a 256 "jive-catalog-${release_version}.tar.gz"
+pnpm release
 ```
+
+该命令依次执行 lint、格式、类型、测试和构建检查，然后在 `artifacts/` 生成版本化压缩包及同名
+`.sha256` 文件。同一版本的压缩包已存在时会拒绝覆盖，必须先确认版本号是否应该递增。
 
 发布包没有原生扩展和生产 npm 依赖，因此不上传 `node_modules`，服务器也不需要 pnpm。`package.json`
 必须随 `dist` 上传，因为其中的 `"type": "module"` 决定 Node 按 ESM 方式加载 `.js`。
@@ -140,7 +131,7 @@ shasum -a 256 "jive-catalog-${release_version}.tar.gz"
 
 ```bash
 scp -P 43593 \
-  jive-catalog-1.0.1.tar.gz \
+  artifacts/jive-catalog-1.0.4.tar.gz \
   root@38.244.13.162:/tmp/
 ```
 
@@ -150,7 +141,7 @@ scp -P 43593 \
 
 ```bash
 ssh -p 43593 root@38.244.13.162
-sha256sum /tmp/jive-catalog-1.0.1.tar.gz
+sha256sum /tmp/jive-catalog-1.0.4.tar.gz
 ```
 
 服务器输出必须与开发机的 SHA-256 完全一致。SHA-256 用来发现传输损坏；正式供应链还可以增加发布
@@ -216,7 +207,7 @@ LOG_LEVEL=info
 
 TMDB_READ_ACCESS_TOKEN=REPLACE_WITH_SECRET
 TMDB_API_BASE_URL=https://api.themoviedb.org/3
-TMDB_CONCURRENCY=2
+TMDB_CONCURRENCY=4
 TMDB_PAGES=5
 TMDB_REQUEST_TIMEOUT_MS=10000
 
@@ -420,7 +411,7 @@ nginx -t
 不重启 Nginx 和 Xray：
 
 ```bash
-release_archive=/tmp/jive-catalog-1.0.1.tar.gz
+release_archive=/tmp/jive-catalog-1.0.4.tar.gz
 next_dir=$(mktemp -d /opt/jive-catalog.next.XXXXXX)
 backup_dir=/opt/jive-catalog.backup-$(date +%Y%m%d-%H%M%S)
 
@@ -434,15 +425,18 @@ chmod 0755 "$next_dir"
 systemctl stop jive-catalog
 mv /opt/jive-catalog "$backup_dir"
 mv "$next_dir" /opt/jive-catalog
-state_backup=/var/lib/jive-catalog/state.json.before-1.0.1-$(date +%Y%m%d-%H%M%S)
-if [ -f /var/lib/jive-catalog/state.json ]; then
-  mv /var/lib/jive-catalog/state.json "$state_backup"
-fi
+
+install -o root -g root -m 0644 \
+  /opt/jive-catalog/deploy/jive-catalog.service \
+  /etc/systemd/system/jive-catalog.service
+
+systemctl daemon-reload
 systemctl start jive-catalog
 ```
 
-本次 `1.0.1` 修改了英语综艺过滤规则，因此在启动新版本前将旧状态文件移动为备份，
-让三个 Feed 立即重建。该操作不会删除旧状态。立即验证第 9 节所有本机检查。
+默认保留 `/var/lib/jive-catalog/state.json` 和 `monitoring.json`。只有发布说明明确指出持久化 Schema
+不兼容时，才单独备份并移走对应状态文件；不能把清理状态作为常规升级步骤。启动后立即执行第 9 节
+所有本机检查。
 
 确认新版本稳定后再清理旧备份；不要在刚发布后立刻删除回滚目录。
 
@@ -458,13 +452,20 @@ failed_dir=/opt/jive-catalog.failed-$(date +%Y%m%d-%H%M%S)
 systemctl stop jive-catalog
 mv /opt/jive-catalog "$failed_dir"
 mv /opt/jive-catalog.backup-YYYYMMDD-HHMMSS /opt/jive-catalog
+
+install -o root -g root -m 0644 \
+  /opt/jive-catalog/deploy/jive-catalog.service \
+  /etc/systemd/system/jive-catalog.service
+
+systemctl daemon-reload
 systemctl start jive-catalog
 
 systemctl status jive-catalog --no-pager
 curl -i http://127.0.0.1:3000/health/ready
 ```
 
-将 `YYYYMMDD-HHMMSS` 替换为实际备份目录名。
+将 `YYYYMMDD-HHMMSS` 替换为实际备份目录名；版本号也应替换为本次发布版本。如果本次发布曾按发布
+说明迁移持久化 Schema，还必须执行该版本专用的数据回滚步骤。
 
 ### Nginx 回滚
 
