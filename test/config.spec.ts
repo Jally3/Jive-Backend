@@ -44,4 +44,31 @@ describe('loadConfig', () => {
       loadConfig({ TMDB_READ_ACCESS_TOKEN: 'secret', MONITORING_TIMEZONE: 'Mars/Olympus' }),
     ).toThrow('MONITORING_TIMEZONE');
   });
+
+  it('requires complete recommendation secrets, pricing and budget persistence', () => {
+    const recommendationEnv = {
+      TMDB_READ_ACCESS_TOKEN: 'secret',
+      RECOMMENDATION_ENABLED: 'true',
+      ARK_API_KEY: 'ark-secret',
+      ARK_BASE_URL: 'https://ark.example/api/v3',
+      ARK_MODEL: 'ep-test',
+      ARK_INPUT_YUAN_PER_MILLION_TOKENS: '1',
+      ARK_OUTPUT_YUAN_PER_MILLION_TOKENS: '2',
+      RECOMMENDATION_CURSOR_SECRET: '0123456789abcdef0123456789abcdef',
+      RECOMMENDATION_SUBJECT_SECRET: '1123456789abcdef0123456789abcdef',
+      RECOMMENDATION_FINGERPRINT_SECRET: '2123456789abcdef0123456789abcdef',
+      RECOMMENDATION_BUDGET_STATE_FILE: './recommendation-budget.json',
+    };
+    expect(loadConfig(recommendationEnv).recommendation).toMatchObject({
+      maxSessions: 1_000,
+      maxCacheEntries: 500,
+      maxConcurrency: 4,
+      maxQueue: 16,
+      subjectDailyCalls: 12,
+      globalDailyCostYuan: 50,
+    });
+    expect(() =>
+      loadConfig({ ...recommendationEnv, ARK_INPUT_YUAN_PER_MILLION_TOKENS: '0' }),
+    ).toThrow('ARK_INPUT_YUAN_PER_MILLION_TOKENS');
+  });
 });

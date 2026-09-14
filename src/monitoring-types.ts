@@ -4,6 +4,7 @@ export interface DurationTotals {
   count: number;
   sumMs: number;
   maxMs: number;
+  buckets: Record<string, number>;
 }
 
 export interface HttpDailyMetric {

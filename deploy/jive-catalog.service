@@ -11,6 +11,7 @@ WorkingDirectory=/opt/jive-catalog
 Environment=CATALOG_STATE_FILE=/var/lib/jive-catalog/state.json
 Environment=ADMIN_ENABLED=true
 Environment=MONITORING_STATE_FILE=/var/lib/jive-catalog/monitoring.json
+Environment=RECOMMENDATION_BUDGET_STATE_FILE=/var/lib/jive-catalog/recommendation-budget.json
 EnvironmentFile=/etc/jive-catalog/env
 ExecStart=/usr/local/bin/node --max-old-space-size=256 /opt/jive-catalog/dist/apps/catalog/src/main.js
 Restart=on-failure

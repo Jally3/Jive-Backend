@@ -5,6 +5,11 @@ import { createCatalogServer, type CatalogReader } from '../src/http-server.js';
 import { Logger } from '../src/logger.js';
 import { MonitoringService } from '../src/monitoring-service.js';
 import type { CatalogSnapshot, FeedName } from '../src/types.js';
+import { RecommendationControls } from '../src/recommendation/controls.js';
+import { RecommendationCursorCodec } from '../src/recommendation/cursor.js';
+import { RecommendationService } from '../src/recommendation/service.js';
+import { RecommendationMemoryStore } from '../src/recommendation/store.js';
+import { AnonymousSubjectIssuer } from '../src/recommendation/subject.js';
 
 const servers: ReturnType<typeof createCatalogServer>[] = [];
 afterEach(async () => {
@@ -93,6 +98,91 @@ describe('catalog HTTP server', () => {
     );
     expect(items.status).toBe(200);
     expect(((await items.json()) as { total: number }).total).toBe(1);
+  });
+
+  it('issues an anonymous subject and returns cold-start without calling Ark', async () => {
+    const secret = '0123456789abcdef0123456789abcdef';
+    const issuer = new AnonymousSubjectIssuer(secret);
+    let arkCalls = 0;
+    const recommendation = new RecommendationService({
+      enabled: true,
+      promptVersion: 'v1',
+      modelVersion: 'test',
+      parameterVersion: 'test',
+      maxOutputTokens: 1_000,
+      minItemsForNextPage: 4,
+      fingerprintSecret: secret,
+      subjectIssuer: issuer,
+      cursorCodec: new RecommendationCursorCodec(secret),
+      store: new RecommendationMemoryStore({
+        maxSessions: 10,
+        maxCacheEntries: 10,
+        sessionTtlMs: 1_800_000,
+        freshTtlMs: 1_800_000,
+        staleTtlMs: 86_400_000,
+        cleanupIntervalMs: 60_000,
+      }),
+      controls: new RecommendationControls({
+        subjectRateLimitPerMinute: 10,
+        sourceRateLimitPerMinute: 10,
+        maxRateLimitSubjects: 100,
+        maxConcurrency: 1,
+        maxQueue: 1,
+      }),
+      budget: {
+        reserve: async () => ({
+          subjectHash: 'unused',
+          tokens: 0,
+          costMicros: 0,
+          date: '2026-09-13',
+        }),
+        settle: async () => undefined,
+        diagnostics: () => ({ available: true }),
+      },
+      ark: {
+        complete: async () => {
+          arkCalls += 1;
+          throw new Error('Ark must not be called for cold start');
+        },
+      },
+      logger: new Logger('error'),
+    });
+    const server = createCatalogServer({
+      catalog: reader(fixture()),
+      logger: new Logger('error'),
+      rateLimitPerMinute: 10,
+      trustProxy: false,
+      recommendation,
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing test address');
+    const base = `http://127.0.0.1:${address.port}`;
+    const issuedResponse = await fetch(`${base}/api/v1/recommendations/anonymous-subject`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const issued = (await issuedResponse.json()) as { anonymousSubjectId: string };
+    expect(issuedResponse.status).toBe(201);
+    const recommendationResponse = await fetch(`${base}/api/v1/recommendations/personalized`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-jive-anonymous-subject': issued.anonymousSubjectId,
+      },
+      body: JSON.stringify({
+        clientRequestId: '00000000-0000-4000-8000-000000000001',
+        history: [],
+        library: [],
+      }),
+    });
+    const result = (await recommendationResponse.json()) as { mode: string };
+    expect(recommendationResponse.status).toBe(200);
+    expect(recommendationResponse.headers.get('cache-control')).toBe('private, no-store');
+    expect(result.mode).toBe('cold_start');
+    expect(arkCalls).toBe(0);
   });
 });
 

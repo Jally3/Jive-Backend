@@ -10,8 +10,8 @@
 
 ## 一句话架构
 
-这是一个无运行时第三方依赖的 Node.js 单进程服务：后台定时从 TMDB 拉取并整理三个榜单，
-将快照缓存在内存（可选落盘），HTTP 层只读取快照，不在用户请求期间访问 TMDB。
+这是一个无运行时第三方依赖的 Node.js 单进程服务：后台定时从 TMDB 拉取并整理三个榜单；推荐接口
+按需调用 Ark LLM，并用进程内会话和独立持久预算账本控制成本与并发。
 
 ```text
 TMDB API
@@ -53,6 +53,28 @@ Jive-Backend/
 │   ├── monitoring-service.ts           # HTTP/TMDB/刷新指标的每日聚合与保留策略
 │   ├── monitoring-store.ts             # 监控状态的校验、恢复和原子保存
 │   ├── monitoring-types.ts             # 监控事件、每日指标和持久化结构
+│   ├── recommendation/
+│   │   ├── ark-client.ts               # 方舟 Chat Completions 调用、超时、响应上限和错误映射
+│   │   ├── budget-store.ts             # 每日主体/全局次数、Token、成本的原子持久预算账本
+│   │   ├── controls.ts                 # 推荐独立限流、全局并发、有界队列和 429 冷却
+│   │   ├── cursor.ts                   # 主体绑定的签名 Cursor 及不可逆摘要
+│   │   ├── prompt.ts                   # Prompt 构建和调用前 Token 保守估算
+│   │   ├── service.ts                  # 首页、续页、缓存、分页和同 Cursor single-flight 编排
+│   │   ├── store.ts                    # 有界的进程内会话和新鲜/陈旧 LRU 缓存
+│   │   ├── subject.ts                  # 服务端匿名主体签发与无状态验签
+│   │   ├── types.ts                    # 推荐 DTO、会话和结构化错误
+│   │   └── validator.ts                # 输入/模型输出校验、清洗和稳定去重
+│   ├── recommendation/
+│   │   ├── service.ts                  # 首页/续页编排、缓存、去重和同 Cursor single-flight
+│   │   ├── ark-client.ts               # Ark JSON 调用、超时、响应上限和错误映射
+│   │   ├── budget-store.ts             # 每日主体/全局调用、Token、成本的原子持久账本
+│   │   ├── controls.ts                 # 推荐低频限流、全局并发、有界队列和 429 冷却
+│   │   ├── store.ts                    # 有界进程内会话和新鲜/陈旧 LRU 缓存
+│   │   ├── subject.ts                  # 服务端匿名主体签发与无状态验签
+│   │   ├── cursor.ts                   # 主体绑定的签名 Cursor
+│   │   ├── prompt.ts                   # Prompt 构造和调用前 Token 保守估算
+│   │   ├── validator.ts                # 输入、模型输出校验及候选稳定去重
+│   │   └── types.ts                    # 推荐 DTO、会话和结构化错误
 │   ├── state-store.ts                  # 可选状态文件的原子写入、恢复及结构校验
 │   ├── tmdb-client.ts                  # TMDB 客户端；鉴权、分页、并发限制、超时与重试
 │   └── types.ts                        # Feed、条目、快照和持久化状态的共享类型与标识工具
@@ -63,6 +85,7 @@ Jive-Backend/
 │   ├── config.spec.ts                  # 验证配置默认值、必填凭证和范围约束
 │   ├── http-server.spec.ts             # 验证兼容路由、压缩、ETag/304 和就绪状态
 │   ├── monitoring-service.spec.ts       # 验证监控聚合、时区、保留和持久化
+│   ├── recommendation.spec.ts           # 验证签名、校验、预算落盘和 Cursor 并发合并
 │   ├── state-store.spec.ts              # 验证状态原子存取及悬空条目引用校验
 │   └── tmdb-client.spec.ts              # 验证 TMDB Detail 缓存和请求合并
 ├── deploy/
@@ -72,6 +95,7 @@ Jive-Backend/
 ├── docs/
 │   ├── ADMIN_MONITORING.md              # 后台监控的数据口径、鉴权和部署说明
 │   ├── CLIENT_API.md                    # 给客户端开发者的接口、缓存和错误处理说明
+│   ├── RECOMMENDATION_API.md             # 推荐主体、分页、事件和错误恢复接入说明
 │   └── openapi.yaml                     # 可导入工具和代码生成器的 OpenAPI 3.1 契约
 ├── scripts/
 │   ├── clean.mjs                       # 构建前删除 dist，防止旧产物残留

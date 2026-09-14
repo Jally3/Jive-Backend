@@ -215,7 +215,21 @@ PUBLIC_RATE_LIMIT_MAX=600
 TRUST_PROXY=false
 
 CATALOG_STATE_FILE=/var/lib/jive-catalog/state.json
+
+# 完成灰度前保持 false；完整变量清单和默认阈值见仓库 .env.example。
+RECOMMENDATION_ENABLED=false
+ARK_API_KEY=REPLACE_WITH_SECRET
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_MODEL=REPLACE_WITH_ENDPOINT_OR_MODEL_ID
+ARK_INPUT_YUAN_PER_MILLION_TOKENS=REPLACE_WITH_CONTRACT_PRICE
+ARK_OUTPUT_YUAN_PER_MILLION_TOKENS=REPLACE_WITH_CONTRACT_PRICE
+RECOMMENDATION_CURSOR_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_BYTES
+RECOMMENDATION_SUBJECT_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_BYTES
+RECOMMENDATION_FINGERPRINT_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_BYTES
+RECOMMENDATION_BUDGET_STATE_FILE=/var/lib/jive-catalog/recommendation-budget.json
 ```
+
+只有价格、密钥、Endpoint 和预算文件均验证无误后才将 `RECOMMENDATION_ENABLED` 改为 `true`。
 
 ### 7.4 systemd
 
@@ -252,6 +266,17 @@ systemctl enable --now jive-catalog
 创建 `/etc/nginx/snippets/jive-catalog.conf`：
 
 ```nginx
+location ^~ /api/v1/recommendations/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_connect_timeout 3s;
+    proxy_send_timeout 30s;
+    proxy_read_timeout 30s;
+    proxy_buffering off;
+}
+
 location ^~ /api/tmdb/ {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;

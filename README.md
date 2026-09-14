@@ -1,7 +1,7 @@
-# Jive TMDB Catalog Lite
+# Jive Backend
 
-面向 Jive 客户端的轻量 TMDB 策展榜单服务。生产运行时只有一个 Node.js 进程，不依赖
-Docker、NestJS、PostgreSQL、Redis 或第三方运行时包。
+面向 Jive 客户端的轻量 TMDB 策展榜单与 LLM 个性化推荐服务。生产运行时只有一个 Node.js 进程，
+不依赖 Docker、NestJS、PostgreSQL、Redis 或第三方运行时包。
 
 首次阅读或准备修改代码时，请参阅 [项目地图](./PROJECT_MAP.md)，其中包含带注释的目录树、
 启动/刷新/请求链路，以及每类需求对应的修改入口。
@@ -12,7 +12,8 @@ Docker、NestJS、PostgreSQL、Redis 或第三方运行时包。
 生产发布和服务器维护请遵循 [部署运行手册](./deploy/DEPLOYMENT_RUNBOOK.md)。该手册记录了当前
 Nginx Stream、网站、Xray 与 Jive 共存环境的首次部署、升级、验证和回滚流程。
 
-客户端接入请使用 [客户端接口文档](./docs/CLIENT_API.md)，工具和代码生成器可导入
+Catalog 客户端接入请使用 [客户端接口文档](./docs/CLIENT_API.md)，个性化推荐接入请使用
+[推荐客户端接口](./docs/RECOMMENDATION_API.md)。工具和代码生成器可导入
 [OpenAPI 3.1 定义](./docs/openapi.yaml)。
 
 ## 接口
@@ -29,10 +30,16 @@ GET /health/ready
 GET /metrics
 GET /admin/
 GET /admin/api/overview?days=30
+POST /api/v1/recommendations/anonymous-subject
+POST /api/v1/recommendations/personalized
+POST /api/v1/recommendations/events
 ```
 
 `.json` 兼容路径由内存动态返回，不生成对外静态文件。Catalog 请求不会实时访问 TMDB；
 后台任务串行刷新 Feed，并在刷新失败时继续返回最近一次成功快照。
+
+推荐会话和候选缓存只在进程内保存，重启后旧 Cursor 返回 410；每日调用、Token 和成本预算单独原子
+落盘。默认关闭推荐功能，配置完整的方舟凭据、签名密钥、预算文件和价格后才能启用。
 
 ## 本地运行
 
@@ -71,6 +78,11 @@ Node 不会自动读取 `.env`。本地可以通过 shell 加载，生产环境�
 设置 `CATALOG_STATE_FILE` 时，状态只用于服务重启恢复，不作为HTTP静态文件发布。写入采用
 临时文件加原子重命名。留空则为纯内存模式，进程重启后需要重新预热。
 生产 systemd 单元默认启用 `/var/lib/jive-catalog/state.json`，避免重启打断 1～7 天的刷新周期。
+
+个性化推荐默认关闭。启用时，匿名主体由服务端签发；会话、Cursor 响应和 30 分钟/24 小时推荐缓存
+只保存在内存，进程重启后旧 Cursor 返回 410。每日调用、Token 和成本预算独立原子保存到
+`RECOMMENDATION_BUDGET_STATE_FILE`，避免通过重启绕过限额。完整参数见 `.env.example`，客户端契约
+见 `docs/openapi.yaml`。
 
 监控后台不进行前端轮询：打开页面时读取一次，之后只有点击“刷新数据”才会再次读取。HTTP、TMDB
 和榜单刷新指标在事件发生时写入内存，并限频原子保存到独立的 `monitoring.json`。部署和鉴权方式见

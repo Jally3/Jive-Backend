@@ -108,5 +108,12 @@ function optionalTimestamp(value: unknown): boolean {
 }
 
 function duration(value: unknown): boolean {
-  return isRecord(value) && counter(value.count) && counter(value.sumMs) && counter(value.maxMs);
+  return (
+    isRecord(value) &&
+    counter(value.count) &&
+    counter(value.sumMs) &&
+    counter(value.maxMs) &&
+    (value.buckets === undefined ||
+      (isRecord(value.buckets) && Object.values(value.buckets).every(counter)))
+  );
 }

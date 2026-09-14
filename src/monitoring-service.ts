@@ -257,7 +257,7 @@ function emptyCatalogMetric(): CatalogDailyMetric {
 }
 
 function emptyDuration(): DurationTotals {
-  return { count: 0, sumMs: 0, maxMs: 0 };
+  return { count: 0, sumMs: 0, maxMs: 0, buckets: {} };
 }
 
 function addDuration(target: DurationTotals, durationMs: number): void {
@@ -265,6 +265,11 @@ function addDuration(target: DurationTotals, durationMs: number): void {
   target.count += 1;
   target.sumMs = Math.round((target.sumMs + value) * 100) / 100;
   target.maxMs = Math.max(target.maxMs, value);
+  target.buckets ??= {};
+  const boundary = [10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000].find(
+    (candidate) => value <= candidate,
+  );
+  increment(target.buckets, boundary === undefined ? '+Inf' : String(boundary));
 }
 
 function increment(values: Record<string, number>, key: string): void {

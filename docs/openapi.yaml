@@ -10,7 +10,98 @@ tags:
   - name: Catalog
   - name: Manifest
   - name: Health
+  - name: Recommendations
 paths:
+  /api/v1/recommendations/anonymous-subject:
+    post:
+      tags: [Recommendations]
+      summary: Issue a signed anonymous recommendation subject
+      operationId: issueAnonymousRecommendationSubject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '201':
+          description: Anonymous subject issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnonymousSubject'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/RecommendationError'
+  /api/v1/recommendations/personalized:
+    post:
+      tags: [Recommendations]
+      summary: Create or continue a personalized recommendation session
+      operationId: getPersonalizedRecommendations
+      parameters:
+        - $ref: '#/components/parameters/AnonymousSubjectHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/InitialRecommendationRequest'
+                - $ref: '#/components/schemas/NextRecommendationRequest'
+      responses:
+        '200':
+          description: Personalized page or cold-start result.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationResult'
+        '400':
+          $ref: '#/components/responses/RecommendationError'
+        '401':
+          $ref: '#/components/responses/RecommendationError'
+        '410':
+          $ref: '#/components/responses/RecommendationError'
+        '413':
+          $ref: '#/components/responses/RecommendationError'
+        '429':
+          $ref: '#/components/responses/RecommendationError'
+        '502':
+          $ref: '#/components/responses/RecommendationError'
+        '503':
+          $ref: '#/components/responses/RecommendationError'
+        '504':
+          $ref: '#/components/responses/RecommendationError'
+  /api/v1/recommendations/events:
+    post:
+      tags: [Recommendations]
+      summary: Record a privacy-minimized recommendation matching event
+      operationId: recordRecommendationEvent
+      parameters:
+        - $ref: '#/components/parameters/AnonymousSubjectHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationEvent'
+      responses:
+        '204':
+          description: Event accepted.
+        '400':
+          $ref: '#/components/responses/RecommendationError'
+        '401':
+          $ref: '#/components/responses/RecommendationError'
+        '429':
+          $ref: '#/components/responses/RecommendationError'
+        '503':
+          $ref: '#/components/responses/RecommendationError'
   /api/tmdb/v1/catalog:
     get:
       tags: [Catalog]
@@ -158,6 +249,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Readiness'
 components:
+  parameters:
+    AnonymousSubjectHeader:
+      name: X-Jive-Anonymous-Subject
+      in: header
+      required: true
+      schema:
+        type: string
+        maxLength: 512
   headers:
     RequestId:
       description: Unique identifier for this request.
@@ -253,7 +352,145 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
+    RecommendationError:
+      description: Structured recommendation error.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RecommendationErrorEnvelope'
   schemas:
+    AnonymousSubject:
+      type: object
+      additionalProperties: false
+      required: [anonymousSubjectId, issuedAt]
+      properties:
+        anonymousSubjectId: { type: string }
+        issuedAt: { type: string, format: date-time }
+    RecommendationHistory:
+      type: object
+      required: [title, progress, completed, watchedAt]
+      properties:
+        title: { type: string, maxLength: 100 }
+        year: { type: string, maxLength: 4 }
+        category: { type: string, maxLength: 50 }
+        episodeName: { type: string, maxLength: 50 }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        completed: { type: boolean }
+        watchedAt: { type: string, format: date-time }
+    RecommendationLibraryItem:
+      type: object
+      required: [title, favorite, following, updatedAt]
+      properties:
+        title: { type: string, maxLength: 100 }
+        year: { type: string, maxLength: 4 }
+        category: { type: string, maxLength: 50 }
+        favorite: { type: boolean }
+        following: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+    InitialRecommendationRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId]
+      properties:
+        clientRequestId: { type: string, format: uuid, maxLength: 64 }
+        locale: { type: string, default: zh-CN, maxLength: 20 }
+        pageSize: { type: integer, minimum: 12, maximum: 24, default: 24 }
+        history:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RecommendationHistory' }
+        library:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/RecommendationLibraryItem' }
+    NextRecommendationRequest:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, cursor]
+      properties:
+        clientRequestId: { type: string, format: uuid, maxLength: 64 }
+        cursor: { type: string, maxLength: 1024 }
+    RecommendationCandidate:
+      type: object
+      required:
+        [
+          title,
+          originalTitle,
+          aliases,
+          year,
+          mediaType,
+          category,
+          latestSeasonNumber,
+          modelConfidence,
+          reason,
+        ]
+      properties:
+        title: { type: string }
+        originalTitle: { type: string }
+        aliases: { type: array, items: { type: string }, maxItems: 3 }
+        year: { type: string }
+        mediaType: { type: string, enum: [movie, tv] }
+        category: { type: string, enum: [movie, tv, animation, variety] }
+        latestSeasonNumber: { type: [integer, 'null'], minimum: 1, maximum: 100 }
+        modelConfidence: { type: number, minimum: 0, maximum: 1 }
+        reason: { type: string }
+    RecommendationResult:
+      type: object
+      required: [requestId, clientRequestId, servedAt, source, mode, items, page, meta]
+      properties:
+        requestId: { type: string }
+        clientRequestId: { type: string }
+        generatedAt: { type: string, format: date-time }
+        servedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        sessionId: { type: string }
+        source: { type: string, enum: [llm, none] }
+        mode: { type: string, enum: [personalized, cold_start] }
+        items: { type: array, items: { $ref: '#/components/schemas/RecommendationCandidate' } }
+        page: { type: object }
+        meta: { type: object }
+    RecommendationEvent:
+      type: object
+      additionalProperties: false
+      required: [clientRequestId, sessionId, pageIndex, candidatePosition, event, occurredAt]
+      properties:
+        clientRequestId: { type: string, format: uuid }
+        sessionId: { type: string }
+        pageIndex: { type: integer, minimum: 1, maximum: 3 }
+        candidatePosition: { type: integer, minimum: 1, maximum: 24 }
+        event:
+          type: string
+          enum:
+            [
+              candidate_exposed,
+              vod_matched,
+              vod_not_found,
+              vod_ambiguous,
+              vod_search_failed,
+              manual_search_opened,
+              source_switch_opened,
+              manual_playable_found,
+            ]
+        occurredAt: { type: string, format: date-time }
+    RecommendationErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId, retryable]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+            clientRequestId: { type: string }
+            retryable: { type: boolean }
+            retryAfterSeconds: { type: integer }
     FeedName:
       type: string
       enum: [latest, popular, top_rated]
