@@ -144,6 +144,20 @@ describe('catalog HTTP server', () => {
           arkCalls += 1;
           throw new Error('Ark must not be called for cold start');
         },
+        stream: async () => {
+          arkCalls += 1;
+          const content = JSON.stringify({
+            items: [{ title: '流式作品', mediaType: 'movie', category: 'movie' }],
+          });
+          return {
+            events: (async function* () {
+              yield {
+                content,
+                usage: { promptTokens: 10, completionTokens: 20 },
+              };
+            })(),
+          };
+        },
       },
       logger: new Logger('error'),
     });
@@ -183,6 +197,35 @@ describe('catalog HTTP server', () => {
     expect(recommendationResponse.headers.get('cache-control')).toBe('private, no-store');
     expect(result.mode).toBe('cold_start');
     expect(arkCalls).toBe(0);
+
+    const streamResponse = await fetch(`${base}/api/v1/recommendations/personalized`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/x-ndjson',
+        'content-type': 'application/json',
+        'x-jive-anonymous-subject': issued.anonymousSubjectId,
+      },
+      body: JSON.stringify({
+        clientRequestId: '00000000-0000-4000-8000-000000000002',
+        history: [
+          {
+            title: '偏好',
+            progress: 1,
+            completed: true,
+            watchedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+    });
+    const streamEvents = (await streamResponse.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers.get('content-type')).toContain('application/x-ndjson');
+    expect(streamResponse.headers.get('x-accel-buffering')).toBe('no');
+    expect(streamEvents.map((event) => event.type)).toEqual(['start', 'item', 'done']);
+    expect(arkCalls).toBe(1);
   });
 });
 

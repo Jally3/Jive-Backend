@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: Jive TMDB Catalog API
+  title: Jive Backend API
   version: 1.0.0
-  description: Read-only catalog snapshots for Jive clients.
+  description: Catalog snapshots and personalized recommendation APIs for Jive clients.
 servers:
   - url: https://hey-rickytse.com
     description: Production
@@ -42,6 +42,7 @@ paths:
       operationId: getPersonalizedRecommendations
       parameters:
         - $ref: '#/components/parameters/AnonymousSubjectHeader'
+        - $ref: '#/components/parameters/RecommendationAcceptHeader'
       requestBody:
         required: true
         content:
@@ -62,6 +63,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecommendationResult'
+            application/x-ndjson:
+              schema:
+                type: string
+              x-ndjson-item-schema:
+                $ref: '#/components/schemas/RecommendationStreamEvent'
+              description: |
+                Newline-delimited RecommendationStreamEvent objects. The sequence is start,
+                zero or more item events, then done. Once streaming has started, failures are
+                represented by a terminal error event because the HTTP status is already 200.
         '400':
           $ref: '#/components/responses/RecommendationError'
         '401':
@@ -257,6 +267,15 @@ components:
       schema:
         type: string
         maxLength: 512
+    RecommendationAcceptHeader:
+      name: Accept
+      in: header
+      required: false
+      description: Use application/x-ndjson for incremental recommendation events.
+      schema:
+        type: string
+        enum: [application/json, application/x-ndjson]
+        default: application/json
   headers:
     RequestId:
       description: Unique identifier for this request.
@@ -440,8 +459,64 @@ components:
         modelConfidence: { type: number, minimum: 0, maximum: 1 }
         reason: { type: string }
     RecommendationResult:
+      oneOf:
+        - $ref: '#/components/schemas/PersonalizedRecommendationResult'
+        - $ref: '#/components/schemas/ColdStartRecommendationResult'
+    RecommendationPage:
       type: object
-      required: [requestId, clientRequestId, servedAt, source, mode, items, page, meta]
+      additionalProperties: false
+      required: [index, pageSize, hasMore, nextCursor]
+      properties:
+        index: { type: integer, minimum: 1, maximum: 3 }
+        pageSize: { type: integer, minimum: 12, maximum: 24 }
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, 'null'], maxLength: 1024 }
+    PersonalizedRecommendationMeta:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          requested,
+          llmReturned,
+          validAfterSchema,
+          duplicatesRemovedInPage,
+          duplicatesRemovedInSession,
+          returned,
+          cache,
+        ]
+      properties:
+        requested: { type: integer, minimum: 0 }
+        llmReturned: { type: integer, minimum: 0 }
+        validAfterSchema: { type: integer, minimum: 0 }
+        duplicatesRemovedInPage: { type: integer, minimum: 0 }
+        duplicatesRemovedInSession: { type: integer, minimum: 0 }
+        returned: { type: integer, minimum: 0 }
+        cache: { type: string, enum: [miss, fresh, stale, cursor_replay] }
+    ColdStartRecommendationMeta:
+      type: object
+      additionalProperties: false
+      required: [reason, llmCalled, cache]
+      properties:
+        reason: { type: string, const: insufficient_preference_signals }
+        llmCalled: { type: boolean, const: false }
+        cache: { type: string, const: miss }
+    PersonalizedRecommendationResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          requestId,
+          clientRequestId,
+          generatedAt,
+          servedAt,
+          expiresAt,
+          sessionId,
+          source,
+          mode,
+          items,
+          page,
+          meta,
+        ]
       properties:
         requestId: { type: string }
         clientRequestId: { type: string }
@@ -449,11 +524,69 @@ components:
         servedAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         sessionId: { type: string }
-        source: { type: string, enum: [llm, none] }
-        mode: { type: string, enum: [personalized, cold_start] }
+        source: { type: string, const: llm }
+        mode: { type: string, const: personalized }
         items: { type: array, items: { $ref: '#/components/schemas/RecommendationCandidate' } }
-        page: { type: object }
-        meta: { type: object }
+        page: { $ref: '#/components/schemas/RecommendationPage' }
+        meta: { $ref: '#/components/schemas/PersonalizedRecommendationMeta' }
+    ColdStartRecommendationResult:
+      type: object
+      additionalProperties: false
+      required: [requestId, clientRequestId, servedAt, source, mode, items, page, meta]
+      properties:
+        requestId: { type: string }
+        clientRequestId: { type: string }
+        servedAt: { type: string, format: date-time }
+        source: { type: string, const: none }
+        mode: { type: string, const: cold_start }
+        items: { type: array, maxItems: 0 }
+        page: { $ref: '#/components/schemas/RecommendationPage' }
+        meta: { $ref: '#/components/schemas/ColdStartRecommendationMeta' }
+    RecommendationStreamStart:
+      type: object
+      additionalProperties: false
+      required: [type, requestId, clientRequestId, mode, source]
+      properties:
+        type: { type: string, const: start }
+        requestId: { type: string }
+        clientRequestId: { type: string, format: uuid }
+        mode: { type: string, enum: [personalized, cold_start] }
+        source: { type: string, enum: [llm, none] }
+    RecommendationStreamItem:
+      type: object
+      additionalProperties: false
+      required: [type, index, item]
+      properties:
+        type: { type: string, const: item }
+        index: { type: integer, minimum: 1, maximum: 24 }
+        item: { $ref: '#/components/schemas/RecommendationCandidate' }
+    RecommendationStreamDone:
+      type: object
+      additionalProperties: false
+      required: [type, result]
+      properties:
+        type: { type: string, const: done }
+        result: { $ref: '#/components/schemas/RecommendationResult' }
+    RecommendationStreamError:
+      type: object
+      additionalProperties: false
+      required: [type, error]
+      properties:
+        type: { type: string, const: error }
+        error: { $ref: '#/components/schemas/RecommendationErrorDetails' }
+    RecommendationStreamEvent:
+      oneOf:
+        - $ref: '#/components/schemas/RecommendationStreamStart'
+        - $ref: '#/components/schemas/RecommendationStreamItem'
+        - $ref: '#/components/schemas/RecommendationStreamDone'
+        - $ref: '#/components/schemas/RecommendationStreamError'
+      discriminator:
+        propertyName: type
+        mapping:
+          start: '#/components/schemas/RecommendationStreamStart'
+          item: '#/components/schemas/RecommendationStreamItem'
+          done: '#/components/schemas/RecommendationStreamDone'
+          error: '#/components/schemas/RecommendationStreamError'
     RecommendationEvent:
       type: object
       additionalProperties: false
@@ -479,18 +612,38 @@ components:
         occurredAt: { type: string, format: date-time }
     RecommendationErrorEnvelope:
       type: object
+      additionalProperties: false
       required: [error]
       properties:
-        error:
-          type: object
-          required: [code, message, requestId, retryable]
-          properties:
-            code: { type: string }
-            message: { type: string }
-            requestId: { type: string }
-            clientRequestId: { type: string }
-            retryable: { type: boolean }
-            retryAfterSeconds: { type: integer }
+        error: { $ref: '#/components/schemas/RecommendationErrorDetails' }
+    RecommendationErrorDetails:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId, retryable]
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_RECOMMENDATION_INPUT
+            - INVALID_RECOMMENDATION_CURSOR
+            - INVALID_ANONYMOUS_SUBJECT
+            - RECOMMENDATION_CURSOR_EXPIRED
+            - RECOMMENDATION_PAYLOAD_TOO_LARGE
+            - RECOMMENDATION_RATE_LIMITED
+            - RECOMMENDATION_SUBJECT_BUDGET_EXHAUSTED
+            - RECOMMENDATION_INVALID_RESPONSE
+            - RECOMMENDATION_DISABLED
+            - RECOMMENDATION_CAPACITY_EXCEEDED
+            - RECOMMENDATION_GLOBAL_BUDGET_EXHAUSTED
+            - RECOMMENDATION_BUDGET_STATE_UNAVAILABLE
+            - RECOMMENDATION_UPSTREAM_RATE_LIMITED
+            - RECOMMENDATION_UPSTREAM_UNAVAILABLE
+            - RECOMMENDATION_UPSTREAM_TIMEOUT
+        message: { type: string }
+        requestId: { type: string }
+        clientRequestId: { type: string, format: uuid }
+        retryable: { type: boolean }
+        retryAfterSeconds: { type: integer, minimum: 1 }
     FeedName:
       type: string
       enum: [latest, popular, top_rated]

@@ -68,6 +68,30 @@ export interface RecommendationResponse {
   meta: RecommendationMeta;
 }
 
+export interface ColdStartRecommendationResponse {
+  requestId: string;
+  clientRequestId: string;
+  servedAt: string;
+  source: 'none';
+  mode: 'cold_start';
+  items: [];
+  page: { index: 1; pageSize: number; hasMore: false; nextCursor: null };
+  meta: { reason: 'insufficient_preference_signals'; llmCalled: false; cache: 'miss' };
+}
+
+export type RecommendationResult = RecommendationResponse | ColdStartRecommendationResponse;
+
+export type RecommendationStreamEvent =
+  | {
+      type: 'start';
+      requestId: string;
+      clientRequestId: string;
+      mode: RecommendationResult['mode'];
+      source: RecommendationResult['source'];
+    }
+  | { type: 'item'; index: number; item: RecommendationCandidate }
+  | { type: 'done'; result: RecommendationResult };
+
 export interface RecommendationSession {
   id: string;
   subjectHash: string;

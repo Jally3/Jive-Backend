@@ -14,6 +14,8 @@ interface Bucket {
   count: number;
 }
 
+const streamedResponseBytes = new WeakMap<ServerResponse, number>();
+
 export function createCatalogServer(options: {
   catalog: CatalogReader;
   logger: Logger;
@@ -39,7 +41,9 @@ export function createCatalogServer(options: {
         route: metricRoute,
         statusCode: response.statusCode,
         durationMs: performance.now() - started,
-        responseBytes: Number(response.getHeader('content-length') ?? 0),
+        responseBytes: Number(
+          response.getHeader('content-length') ?? streamedResponseBytes.get(response) ?? 0,
+        ),
         contentEncoding: String(response.getHeader('content-encoding') ?? 'identity'),
       });
     });
@@ -241,6 +245,10 @@ async function handleRecommendationRoute(
     return;
   }
   if (url.pathname === '/api/v1/recommendations/personalized') {
+    if (accepts(request, 'application/x-ndjson')) {
+      await streamRecommendations(request, response, body, requestId, options);
+      return;
+    }
     let result;
     try {
       result = await options.recommendation.recommend(
@@ -280,6 +288,95 @@ async function handleRecommendationRoute(
     return;
   }
   throw new RecommendationError(404, 'NOT_FOUND', '资源不存在');
+}
+
+async function streamRecommendations(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: unknown,
+  requestId: string,
+  options: { recommendation?: RecommendationService; trustProxy: boolean },
+): Promise<void> {
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  request.once('aborted', abort);
+  response.once('close', abort);
+  const events = options.recommendation!.streamRecommendations(
+    body,
+    header(request, 'x-jive-anonymous-subject'),
+    requestId,
+    clientIp(request, options.trustProxy),
+    controller.signal,
+  );
+  try {
+    const first = await events.next();
+    if (first.done) throw new RecommendationError(500, 'INTERNAL_ERROR', '服务暂时不可用');
+    response.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'private, no-store',
+      'x-accel-buffering': 'no',
+    });
+    await writeNdjson(response, first.value);
+    while (true) {
+      const next = await events.next();
+      if (next.done) break;
+      await writeNdjson(response, next.value);
+    }
+    response.end();
+  } catch (error) {
+    const input = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+    if (error instanceof RecommendationError && typeof input.clientRequestId === 'string') {
+      error.clientRequestId = input.clientRequestId;
+    }
+    if (!response.headersSent) throw error;
+    if (!response.destroyed && !controller.signal.aborted) {
+      const known =
+        error instanceof RecommendationError
+          ? error
+          : new RecommendationError(500, 'INTERNAL_ERROR', '服务暂时不可用');
+      await writeNdjson(response, {
+        type: 'error',
+        error: {
+          code: known.code,
+          message: known.message,
+          requestId,
+          retryable: known.retryable,
+          ...(known.clientRequestId ? { clientRequestId: known.clientRequestId } : {}),
+          ...(known.retryAfterSeconds ? { retryAfterSeconds: known.retryAfterSeconds } : {}),
+        },
+      });
+    }
+    if (!response.destroyed) response.end();
+  } finally {
+    await events.return(undefined).catch(() => undefined);
+    request.off('aborted', abort);
+    response.off('close', abort);
+  }
+}
+
+async function writeNdjson(response: ServerResponse, value: object): Promise<void> {
+  const payload = `${JSON.stringify(value)}\n`;
+  streamedResponseBytes.set(
+    response,
+    (streamedResponseBytes.get(response) ?? 0) + Buffer.byteLength(payload),
+  );
+  if (response.write(payload)) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      response.off('drain', drained);
+      response.off('close', closed);
+    };
+    const drained = (): void => {
+      cleanup();
+      resolve();
+    };
+    const closed = (): void => {
+      cleanup();
+      reject(new RecommendationError(499, 'RECOMMENDATION_CLIENT_ABORTED', '客户端已断开'));
+    };
+    response.once('drain', drained);
+    response.once('close', closed);
+  });
 }
 
 async function readJsonBody(request: IncomingMessage, maximum: number): Promise<unknown> {
@@ -409,6 +506,13 @@ function recommendationFailure(response: ServerResponse, error: unknown, request
 function header(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function accepts(request: IncomingMessage, mediaType: string): boolean {
+  return (request.headers.accept ?? '')
+    .split(',')
+    .map((value) => value.split(';')[0]?.trim().toLowerCase())
+    .includes(mediaType);
 }
 
 const payloadTooLarge = (): RecommendationError =>

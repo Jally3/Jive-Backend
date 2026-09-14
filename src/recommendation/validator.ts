@@ -92,12 +92,19 @@ export function validateModelOutput(
   const candidates: RecommendationCandidate[] = [];
   let invalidCount = 0;
   for (const item of envelope.items) {
-    const candidate = parseCandidate(item, currentYear);
+    const candidate = validateRecommendationCandidate(item, currentYear);
     if (candidate) candidates.push(candidate);
     else invalidCount += 1;
   }
   if (candidates.length === 0) throw invalidResponse();
   return { candidates, rawCount: envelope.items.length, invalidCount };
+}
+
+export function validateRecommendationCandidate(
+  value: unknown,
+  currentYear = new Date().getUTCFullYear(),
+): RecommendationCandidate | undefined {
+  return parseCandidate(value, currentYear);
 }
 
 export function stableDeduplicate(

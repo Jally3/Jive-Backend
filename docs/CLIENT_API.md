@@ -8,6 +8,9 @@
 本文档面向移动端、桌面端和 Web 客户端。所有接口均为公开只读 GET 接口，不需要用户登录或
 Authorization Header。服务端后台刷新 TMDB 数据，客户端请求不会直接触发 TMDB 抓取。
 
+本文档只覆盖 TMDB Catalog。个性化推荐及新版 NDJSON 流式接入请使用
+[Jive 个性化推荐客户端接口](./RECOMMENDATION_API.md)。
+
 ## 1. 快速接入
 
 客户端推荐直接请求 Catalog API：
