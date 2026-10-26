@@ -4,6 +4,7 @@
 Docker，也不新增 Caddy。
 
 - 完整首次部署、升级、验证和回滚步骤：[部署运行手册](./DEPLOYMENT_RUNBOOK.md)
+- VPS 架构、Jive 日常巡检和备份恢复：[服务器运维概述](./OneTechCloud-VPS-Architecture-Operations-Simple.md)
 - systemd 单元模板：[jive-catalog.service](./jive-catalog.service)
 
 生产服务器只需要 Node.js 24、构建后的 `dist`、根目录 `package.json` 和 systemd 单元，不需要
